@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+*.user
+.vs/
+
+# Settings and user data
+*.db
+settings.json
+
+# Publish output
+publish/
+
+# OS
+.DS_Store
+Thumbs.db
