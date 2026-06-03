@@ -43,4 +43,28 @@ public static class SettingsManager
     }
 
     public static string GetAppDataPath() => AppDataPath;
+
+    public static void RegisterUriScheme()
+    {
+        try
+        {
+            var exePath = Environment.ProcessPath ??
+                System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName;
+
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
+                @"Software\Classes\allsio-push");
+            key.SetValue("", "Allsio Push Protocol");
+            key.SetValue("URL Protocol", "");
+
+            using var iconKey = key.CreateSubKey("DefaultIcon");
+            iconKey.SetValue("", $"{exePath},0");
+
+            using var cmdKey = key.CreateSubKey(@"shell\open\command");
+            cmdKey.SetValue("", $"\"{exePath}\" \"%1\"");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[URIScheme] Registration failed: {ex.Message}");
+        }
+    }
 }
