@@ -86,8 +86,10 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
         root.Loaded += (_, _) =>
         {
             _tracker.Register(this);
-            SizeAndPosition(root);
+            // Start the countdown first so the TTL bar is visible and its height is
+            // included when we measure — otherwise it overflows and clips the buttons.
             if ((notification.Ttl ?? 0) > 0) StartTtlCountdown(notification.Ttl!.Value);
+            SizeAndPosition(root);
         };
         Closed += (_, _) => _tracker.Unregister(this);
     }
@@ -108,10 +110,10 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
     private void SizeAndPosition(FrameworkElement root)
     {
         root.Measure(new global::Windows.Foundation.Size(_width, double.PositiveInfinity));
-        var h = (int)Math.Clamp(root.DesiredSize.Height, 120, 480);
+        var h = Math.Clamp(root.DesiredSize.Height, 120, 480);
         var dpi = this.GetDpiForWindow() / 96.0;
-        var pw = (int)(_width * dpi);
-        var ph = (int)(h * dpi);
+        var pw = (int)Math.Ceiling(_width * dpi);
+        var ph = (int)Math.Ceiling(h * dpi);
         AppWindow.Resize(new SizeInt32(pw, ph));
         var area = DisplayArea.Primary.WorkArea;
         AppWindow.Move(new PointInt32(area.X + area.Width - pw - 12, area.Y + area.Height - ph - 12));
