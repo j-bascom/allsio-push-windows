@@ -351,7 +351,7 @@ public class SlideoutWindow : Form, IRemoteAckTarget
                     {
                         button.Enabled = false;
                         await _ackService.Acknowledge(_notification.NotificationId, label, "ack");
-                        button.Text = "Acknowledged";
+                        button.ForeColor = Color.FromArgb(34, 197, 94);
                         CloseAfter(1200);
                     };
                     if (_ackButton == null) _ackButton = button;
@@ -373,7 +373,7 @@ public class SlideoutWindow : Form, IRemoteAckTarget
                             button.Enabled = false;
                             if (!string.IsNullOrWhiteSpace(capturedBtn.WebhookUrl))
                                 await _ackService.FireWebhook(capturedBtn.WebhookUrl!, _notification, capturedLabel);
-                            button.Text = "Sent";
+                            button.ForeColor = Color.FromArgb(34, 197, 94);
                             CloseAfter(1200);
                         };
                         break;
@@ -407,7 +407,7 @@ public class SlideoutWindow : Form, IRemoteAckTarget
             {
                 ack.Enabled = false;
                 await _ackService.Acknowledge(_notification.NotificationId, "Acknowledge", "ack");
-                ack.Text = "Acknowledged";
+                ack.ForeColor = Color.FromArgb(34, 197, 94);
                 CloseAfter(1200);
             };
             _actionsPanel.Controls.Add(ack);

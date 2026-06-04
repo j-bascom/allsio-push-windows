@@ -206,7 +206,7 @@ public class PopupWindow : Form, IRemoteAckTarget
                     {
                         button.Enabled = false;
                         await _ackService.Acknowledge(_notification.NotificationId, label, "ack");
-                        button.Text = "Acknowledged";
+                        button.ForeColor = Color.FromArgb(34, 197, 94);
                         await Task.Delay(1200);
                         if (!IsDisposed) Close();
                     };
@@ -228,7 +228,7 @@ public class PopupWindow : Form, IRemoteAckTarget
                             button.Enabled = false;
                             if (!string.IsNullOrWhiteSpace(captured.WebhookUrl))
                                 await _ackService.FireWebhook(captured.WebhookUrl!, _notification, label);
-                            button.Text = "Sent";
+                            button.ForeColor = Color.FromArgb(34, 197, 94);
                             await Task.Delay(1200);
                             if (!IsDisposed) Close();
                         };
@@ -255,7 +255,7 @@ public class PopupWindow : Form, IRemoteAckTarget
             {
                 ack.Enabled = false;
                 await _ackService.Acknowledge(_notification.NotificationId, "Acknowledge", "ack");
-                ack.Text = "Acknowledged";
+                ack.ForeColor = Color.FromArgb(34, 197, 94);
                 await Task.Delay(1200);
                 if (!IsDisposed) Close();
             };
