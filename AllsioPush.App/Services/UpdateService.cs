@@ -7,7 +7,7 @@ public class UpdateService
 {
     private readonly UpdateManager _manager;
     private const string RepoUrl =
-        "https://github.com/CharlestonTelecomSolutions/allsio-push-windows";
+        "https://github.com/j-bascom/allsio-push-windows";
 
     public UpdateService()
     {
