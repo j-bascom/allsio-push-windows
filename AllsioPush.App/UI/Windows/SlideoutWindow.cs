@@ -32,6 +32,12 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
     private bool _ttlPaused;
     private bool _closing;
 
+    private int _pixelWidth;
+    private int _pixelHeight;
+
+    private static readonly List<SlideoutWindow> Stack = new();
+    private static readonly object StackLock = new();
+
     public string? NotificationId => _notification.NotificationId;
 
     public SlideoutWindow(PushNotification notification, AckService ackService, WindowTracker tracker)
@@ -91,7 +97,11 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
             if ((notification.Ttl ?? 0) > 0) StartTtlCountdown(notification.Ttl!.Value);
             SizeAndPosition(root);
         };
-        Closed += (_, _) => _tracker.Unregister(this);
+        Closed += (_, _) =>
+        {
+            _tracker.Unregister(this);
+            RemoveFromStack();
+        };
     }
 
     private void ConfigurePresenter()
@@ -112,11 +122,53 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
         root.Measure(new global::Windows.Foundation.Size(_width, double.PositiveInfinity));
         var h = Math.Clamp(root.DesiredSize.Height, 120, 480);
         var dpi = this.GetDpiForWindow() / 96.0;
-        var pw = (int)Math.Ceiling(_width * dpi);
-        var ph = (int)Math.Ceiling(h * dpi);
-        AppWindow.Resize(new SizeInt32(pw, ph));
+        _pixelWidth = (int)Math.Ceiling(_width * dpi);
+        _pixelHeight = (int)Math.Ceiling(h * dpi);
+        AppWindow.Resize(new SizeInt32(_pixelWidth, _pixelHeight));
+        AddToStack();
+    }
+
+    private void AddToStack()
+    {
+        lock (StackLock)
+        {
+            if (!Stack.Contains(this)) Stack.Add(this);
+        }
+        LayoutStack();
+    }
+
+    private void RemoveFromStack()
+    {
+        bool removed;
+        lock (StackLock) removed = Stack.Remove(this);
+        if (removed) LayoutStack();
+    }
+
+    // Stack open slideouts bottom-up along the right edge: newest sits at the
+    // bottom, older ones step up by their own height plus a gap. Each window
+    // moves itself on its own dispatcher so cross-thread moves stay safe.
+    private static void LayoutStack()
+    {
+        const int margin = 12;
+        const int gap = 8;
+        SlideoutWindow[] snapshot;
+        lock (StackLock) snapshot = Stack.ToArray();
+
         var area = DisplayArea.Primary.WorkArea;
-        AppWindow.Move(new PointInt32(area.X + area.Width - pw - 12, area.Y + area.Height - ph - 12));
+        var y = area.Y + area.Height - margin;
+        for (var i = snapshot.Length - 1; i >= 0; i--)
+        {
+            var win = snapshot[i];
+            var wy = y - win._pixelHeight;
+            var wx = area.X + area.Width - win._pixelWidth - margin;
+            y = wy - gap;
+            var pos = new PointInt32(wx, wy);
+            win.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (win._closing) return;
+                try { win.AppWindow.Move(pos); } catch { }
+            });
+        }
     }
 
     private FrameworkElement BuildHeader()

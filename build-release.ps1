@@ -7,7 +7,7 @@
 # whole folder and resolves the main exe via --mainExe.
 
 $ErrorActionPreference = "Stop"
-$version = "2026.6.2"
+$version = "2026.6.3"
 $project = "AllsioPush.App"
 $rid = "win-x64"
 $publishDir = "publish\$rid"

@@ -28,7 +28,7 @@ public class LoginWindow : WindowEx
         _authService = authService;
 
         Title = "Allsio Push — Sign In";
-        this.SetWindowSize(480, 640);
+        this.SetWindowSize(480, 800);
         this.CenterOnScreen();
         WindowIcon.Apply(this);
         SystemBackdrop = new MicaBackdrop();
