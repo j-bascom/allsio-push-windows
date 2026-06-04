@@ -36,8 +36,10 @@ public class NotificationRouter
     {
         // call_ended is a control event, not a notification: it carries no UI
         // and is never persisted or routed to a toast/slideout. It simply closes
-        // the matching screen pop.
-        if (string.Equals(notification.TemplateType, "call_ended", StringComparison.OrdinalIgnoreCase))
+        // the matching screen pop. Normalize casing/underscores so the server
+        // may send "call_ended", "callEnded", or "call_end".
+        var normalized = notification.TemplateType?.ToLowerInvariant().Replace("_", "");
+        if (normalized == "callended" || normalized == "callend")
         {
             var endedCallId = GetCallId(notification);
             if (!string.IsNullOrWhiteSpace(endedCallId))
@@ -86,8 +88,13 @@ public class NotificationRouter
                 _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
 
             var popData = ExtractScreenPopData(notification);
-            if (popData != null)
+            if (popData != null
+                && (popData.Phorest != null
+                    || popData.Qbo != null
+                    || popData.PriorCalls.Count > 0))
+            {
                 _uiContext.Post(_ => OpenScreenPopWindow(popData), null);
+            }
             return;
         }
 
