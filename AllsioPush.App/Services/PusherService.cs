@@ -17,9 +17,18 @@ public class PusherService : IDisposable
     private bool _intentionalDisconnect = false;
     private bool _disposed = false;
 
+    private readonly object _channelsLock = new();
+    private readonly List<string> _subscribedChannels = new();
+
     public event Action<PushNotification>? OnNotificationReceived;
     public event Action<string, string>? OnAcknowledgementReceived;
     public event Action<bool>? OnConnectionStateChanged;
+    public event Action<IReadOnlyList<string>>? OnChannelsChanged;
+
+    public IReadOnlyList<string> SubscribedChannels
+    {
+        get { lock (_channelsLock) { return _subscribedChannels.ToArray(); } }
+    }
 
     public PusherService(AuthSession session, AppSettings settings)
     {
@@ -69,6 +78,10 @@ public class PusherService : IDisposable
 
     private async Task EstablishConnection()
     {
+        // Reset the confirmed-channel list so a (re)connect rebuilds it from scratch.
+        lock (_channelsLock) { _subscribedChannels.Clear(); }
+        OnChannelsChanged?.Invoke(SubscribedChannels);
+
         var authorizer = new HttpAuthorizer($"{_settings.ApiBase}/api/pusher/auth")
         {
             AuthenticationHeader = new AuthenticationHeaderValue("Bearer", _session.Token),
@@ -112,6 +125,16 @@ public class PusherService : IDisposable
         try
         {
             var channel = await pusher.SubscribeAsync(channelName).ConfigureAwait(false);
+
+            // SubscribeAsync awaits subscription_succeeded for private channels, so
+            // the channel is confirmed by the time it returns here.
+            bool added;
+            lock (_channelsLock)
+            {
+                added = !_subscribedChannels.Contains(channelName);
+                if (added) _subscribedChannels.Add(channelName);
+            }
+            if (added) OnChannelsChanged?.Invoke(SubscribedChannels);
 
             channel.Bind("notification", (PusherEvent ev) =>
             {

@@ -141,6 +141,8 @@ static class Program
             {
                 PostToUi(() => tray.SetConnected(connected));
             };
+            pusher.OnChannelsChanged += channels =>
+                uiContext.Post(_ => tray.UpdateChannels(channels), null);
             pusher.OnNotificationReceived += (notification) =>
             {
                 uiContext.Post(_ => router.Route(notification), null);
@@ -174,6 +176,7 @@ static class Program
                 ackService.SetSession(s);
                 loginWindow?.Close();
                 loginWindow = null;
+                tray.SetAuthState(true);
                 _ = ConnectPusher(s);
             };
             loginWindow.FormClosed += (s, e) => loginWindow = null;
@@ -217,7 +220,9 @@ static class Program
             CredentialManager.ClearSession();
             session = null;
             ackService.SetSession(null);
+            tray.SetAuthState(false);
             tray.SetConnected(false);
+            tray.UpdateChannels(Array.Empty<string>());
 
             if (settingsWindow != null && !settingsWindow.IsDisposed) settingsWindow.Close();
             if (historyWindow != null && !historyWindow.IsDisposed) historyWindow.Close();
@@ -252,6 +257,7 @@ static class Program
                         loginWindow.Close();
                     }
                     loginWindow = null;
+                    tray.SetAuthState(true);
                     _ = ConnectPusher(newSession);
                     tray.ShowBalloon("Allsio Push", "Signed in.");
                 }, null);
@@ -271,6 +277,7 @@ static class Program
 
         tray.OnOpenSettings += (s, e) => ShowSettings();
         tray.OnOpenHistory += (s, e) => ShowHistory();
+        tray.OnSignIn += (s, e) => ShowLogin();
         tray.OnSignOut += (s, e) => DoSignOut();
 
         tray.OnExit += (s, e) =>
@@ -321,7 +328,9 @@ static class Program
                     CredentialManager.ClearSession();
                     session = null;
                     ackService.SetSession(null);
+                    tray.SetAuthState(false);
                     tray.SetConnected(false);
+                    tray.UpdateChannels(Array.Empty<string>());
                     if (settingsWindow != null && !settingsWindow.IsDisposed) settingsWindow.Close();
                     if (historyWindow != null && !historyWindow.IsDisposed) historyWindow.Close();
                     ShowLogin();
@@ -333,6 +342,8 @@ static class Program
         {
             _ = historyService.PruneOldEntries();
         }, null, TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+
+        tray.SetAuthState(session != null);
 
         if (session != null)
         {
