@@ -1,13 +1,16 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using AllsioPush.Config;
 using AllsioPush.Models;
 using AllsioPush.Services;
 using Microsoft.UI;
 using Microsoft.UI.Text;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Windows.Graphics;
 using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
@@ -52,7 +55,7 @@ public class HistoryWindow : WindowEx
 
         Title = "Allsio Push — Notification History";
         this.SetWindowSize(680, 720);
-        this.CenterOnScreen();
+        PositionBottomRight();
         WindowIcon.Apply(this);
         SystemBackdrop = new MicaBackdrop();
 
@@ -99,6 +102,26 @@ public class HistoryWindow : WindowEx
 
         root.Loaded += async (_, _) => await ReloadLocalAsync();
     }
+
+    // Anchor to the bottom-right of the work area on whichever monitor the cursor is on,
+    // 12px above the taskbar. Public so re-opening (single-instance) can snap it back.
+    public void PositionBottomRight()
+    {
+        var cursor = GetCursorPos(out var p) ? new PointInt32(p.X, p.Y) : new PointInt32(0, 0);
+        var area = (DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Nearest)
+                    ?? DisplayArea.Primary).WorkArea;
+        var size = AppWindow.Size;
+        var x = area.X + area.Width - size.Width - 12;
+        var y = area.Y + area.Height - size.Height - 12;
+        AppWindow.Move(new PointInt32(x, y));
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
 
     private FrameworkElement BuildHeader(Button refresh, Button clear)
     {

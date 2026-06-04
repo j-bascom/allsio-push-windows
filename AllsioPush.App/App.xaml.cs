@@ -271,6 +271,7 @@ public partial class App : Application
         {
             if (_historyWindow != null)
             {
+                _historyWindow.PositionBottomRight();
                 _historyWindow.Activate();
                 return;
             }
