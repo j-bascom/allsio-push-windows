@@ -3,7 +3,7 @@
 # Usage: .\build-release.ps1
 
 $ErrorActionPreference = "Stop"
-$version = "2026.06.1"
+$version = "2026.6.1"
 $project = "AllsioPush.App"
 $rid = "win-x64"
 $publishDir = "publish\$rid"
