@@ -23,9 +23,12 @@ static class Program
         AuthSession? session = CredentialManager.LoadSession();
         var authService = new AuthService(settings);
 
-        // If launched via allsio-push://auth?token=xxx from a fresh process, capture it.
-        // The login window owns the WebView2 flow; this branch is reserved for a future phase
-        // where the token can be exchanged directly without opening WebView2.
+        var ackService = new AckService(settings);
+        if (session != null) ackService.SetSession(session);
+
+        var windowTracker = new WindowTracker();
+        var toastService = new ToastService(settings, ackService, uiContext);
+
         if (args.Length > 0 && args[0].StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
         {
             var captured = ExtractToken(args[0]);
@@ -35,6 +38,38 @@ static class Program
         using var tray = new TrayManager(settings);
         PusherService? pusher = null;
         LoginWindow? loginWindow = null;
+
+        var router = new NotificationRouter(settings, uiContext, toastService, ackService, windowTracker);
+
+        // Toast activation handler: must be registered before Application.Run.
+        // When DeferToToast is on, clicking the toast body re-routes the original notification
+        // through the router (which will then open the appropriate window).
+        toastService.RegisterActivationHandler(notification =>
+        {
+            // Open the window the toast was deferring — bypass DeferToToast on re-entry.
+            var copy = notification;
+            if (copy.DisplayMode == "popup" || copy.TemplateType == "custom_html"
+                || copy.TemplateType == "url_popup")
+            {
+                uiContext.Post(_ => new PopupWindow(copy, ackService, windowTracker).Show(), null);
+            }
+            else if (copy.TemplateType == "url_tab" && !string.IsNullOrWhiteSpace(copy.Url))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = copy.Url,
+                        UseShellExecute = true,
+                    });
+                }
+                catch { }
+            }
+            else
+            {
+                uiContext.Post(_ => new SlideoutWindow(copy, ackService, windowTracker).Show(), null);
+            }
+        });
 
         void PostToUi(Action action) => uiContext.Post(_ => action(), null);
 
@@ -48,11 +83,15 @@ static class Program
             };
             pusher.OnNotificationReceived += (notification) =>
             {
-                PostToUi(() => tray.ShowBalloon(notification.Title, notification.Content));
+                uiContext.Post(_ => router.Route(notification), null);
             };
             pusher.OnAcknowledgementReceived += (notificationId, acknowledgedBy) =>
             {
-                System.Diagnostics.Debug.WriteLine($"[App] Remote ack: {notificationId} by {acknowledgedBy}");
+                uiContext.Post(_ =>
+                {
+                    windowTracker.BroadcastRemoteAck(notificationId, acknowledgedBy);
+                    toastService.UpdateRemoteAck(notificationId, acknowledgedBy);
+                }, null);
             };
             await pusher.ConnectAsync();
         }
@@ -70,6 +109,7 @@ static class Program
             {
                 CredentialManager.SaveSession(s);
                 session = s;
+                ackService.SetSession(s);
                 loginWindow?.Close();
                 loginWindow = null;
                 await ConnectPusher(s);
@@ -92,6 +132,7 @@ static class Program
             pusher = null;
             CredentialManager.ClearSession();
             session = null;
+            ackService.SetSession(null);
             tray.SetConnected(false);
             ShowLogin();
         };
@@ -102,7 +143,6 @@ static class Program
             Application.Exit();
         };
 
-        // Heartbeat timer — every 60 seconds. Clears session on 401.
         var heartbeatTimer = new System.Threading.Timer(async _ =>
         {
             var current = session;
@@ -116,6 +156,7 @@ static class Program
                     pusher = null;
                     CredentialManager.ClearSession();
                     session = null;
+                    ackService.SetSession(null);
                     tray.SetConnected(false);
                     ShowLogin();
                 });
