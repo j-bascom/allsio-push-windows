@@ -18,6 +18,32 @@ static class Program
         var uiContext = new WindowsFormsSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(uiContext);
 
+        // Single-instance gate. Must run before any tray icon, window,
+        // or HTTP service is constructed — second instances should exit cleanly.
+        var singleInstance = new SingleInstanceService(uiContext);
+        if (!singleInstance.IsFirstInstance)
+        {
+            SingleInstanceService.SendArgsToRunningInstance(args);
+            singleInstance.Dispose();
+            return;
+        }
+
+        try
+        {
+            singleInstance.StartPipeServer();
+            RunFirstInstance(args, uiContext, singleInstance);
+        }
+        finally
+        {
+            singleInstance.Dispose();
+        }
+    }
+
+    private static void RunFirstInstance(
+        string[] args,
+        WindowsFormsSynchronizationContext uiContext,
+        SingleInstanceService singleInstance)
+    {
         SettingsManager.RegisterUriScheme();
         var settings = SettingsManager.Load();
         SettingsManager.SetLaunchOnStartup(settings.LaunchOnStartup);
@@ -32,11 +58,8 @@ static class Program
         var windowTracker = new WindowTracker();
         var toastService = new ToastService(settings, ackService, uiContext);
 
-        if (args.Length > 0 && args[0].StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
-        {
-            var captured = ExtractToken(args[0]);
-            System.Diagnostics.Debug.WriteLine($"[App] URI-scheme launch captured token (len={captured?.Length ?? 0})");
-        }
+        // Capture any token passed via this process's own args (URI launch).
+        var startupToken = ExtractToken(args);
 
         using var tray = new TrayManager(settings);
         PusherService? pusher = null;
@@ -46,21 +69,16 @@ static class Program
 
         var router = new NotificationRouter(settings, uiContext, toastService, ackService, windowTracker, historyService);
 
-        // History entry persisted → push to open HistoryWindow live
         router.OnEntrySaved += entry =>
         {
             uiContext.Post(_ => historyWindow?.AddEntry(entry), null);
         };
 
-        // AckService recorded an action → update HistoryWindow card
         ackService.OnActionRecorded += (id, action, by) =>
         {
             uiContext.Post(_ => historyWindow?.UpdateEntryAction(id, action, by), null);
         };
 
-        // Toast activation handler: must be registered before Application.Run.
-        // When DeferToToast is on, clicking the toast body re-routes the original notification
-        // through the router (which will then open the appropriate window).
         toastService.RegisterActivationHandler(notification =>
         {
             var copy = notification;
@@ -103,7 +121,6 @@ static class Program
             };
             pusher.OnAcknowledgementReceived += (notificationId, acknowledgedBy) =>
             {
-                // Persist remote ack to history too, so the card reflects it after restart.
                 _ = historyService.RecordAction(notificationId, "acknowledged", acknowledgedBy);
                 uiContext.Post(_ =>
                 {
@@ -124,14 +141,14 @@ static class Program
             }
 
             loginWindow = new LoginWindow(settings, authService);
-            loginWindow.OnLoginSuccess += async (s) =>
+            loginWindow.OnLoginSuccess += (s) =>
             {
                 CredentialManager.SaveSession(s);
                 session = s;
                 ackService.SetSession(s);
                 loginWindow?.Close();
                 loginWindow = null;
-                await ConnectPusher(s);
+                _ = ConnectPusher(s);
             };
             loginWindow.FormClosed += (s, e) => loginWindow = null;
             loginWindow.Show();
@@ -182,6 +199,50 @@ static class Program
             ShowLogin();
         }
 
+        void HandleIncomingToken(string token)
+        {
+            if (session != null)
+            {
+                System.Diagnostics.Debug.WriteLine("[App] Incoming token ignored — already signed in.");
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                var newSession = await authService.ExchangeToken(token);
+                if (newSession == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[App] Incoming token exchange failed.");
+                    return;
+                }
+
+                uiContext.Post(_ =>
+                {
+                    CredentialManager.SaveSession(newSession);
+                    session = newSession;
+                    ackService.SetSession(newSession);
+                    if (loginWindow != null && !loginWindow.IsDisposed)
+                    {
+                        loginWindow.Close();
+                    }
+                    loginWindow = null;
+                    _ = ConnectPusher(newSession);
+                    tray.ShowBalloon("Allsio Push", "Signed in.");
+                }, null);
+            });
+        }
+
+        singleInstance.OnSecondInstanceArgs += incomingArgs =>
+        {
+            var token = ExtractToken(incomingArgs);
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                HandleIncomingToken(token!);
+            }
+            // Also surface tray to user attention regardless.
+            tray.ShowBalloon("Allsio Push", "Already running.");
+        };
+
         tray.OnOpenSettings += (s, e) => ShowSettings();
         tray.OnOpenHistory += (s, e) => ShowHistory();
         tray.OnSignOut += (s, e) => DoSignOut();
@@ -214,7 +275,6 @@ static class Program
             }
         }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
-        // Prune history after a 10s grace period so it doesn't slow startup.
         var pruneTimer = new System.Threading.Timer(_ =>
         {
             _ = historyService.PruneOldEntries();
@@ -223,6 +283,10 @@ static class Program
         if (session != null)
         {
             _ = Task.Run(async () => await ConnectPusher(session));
+        }
+        else if (!string.IsNullOrWhiteSpace(startupToken))
+        {
+            HandleIncomingToken(startupToken!);
         }
         else
         {
@@ -236,7 +300,34 @@ static class Program
         pusher?.Dispose();
     }
 
-    private static string? ExtractToken(string uri)
+    /// <summary>
+    /// Extracts a token from process args. Supports two forms:
+    ///  - allsio-push://auth?token=xxx  (URI scheme launch)
+    ///  - --token=xxx                   (command-line form for testing)
+    /// </summary>
+    private static string? ExtractToken(string[] args)
+    {
+        if (args == null) return null;
+
+        foreach (var arg in args)
+        {
+            if (string.IsNullOrWhiteSpace(arg)) continue;
+
+            if (arg.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
+            {
+                var t = TokenFromUri(arg);
+                if (!string.IsNullOrWhiteSpace(t)) return t;
+            }
+            else if (arg.StartsWith("--token=", StringComparison.OrdinalIgnoreCase))
+            {
+                var v = arg.Substring("--token=".Length);
+                if (!string.IsNullOrWhiteSpace(v)) return v;
+            }
+        }
+        return null;
+    }
+
+    private static string? TokenFromUri(string uri)
     {
         try
         {

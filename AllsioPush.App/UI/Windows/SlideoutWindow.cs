@@ -29,6 +29,8 @@ public class SlideoutWindow : Form, IRemoteAckTarget
     private bool _ttlPaused = false;
     private bool _closing = false;
 
+    private Rectangle _targetScreen;
+
     public string? NotificationId => _notification.NotificationId;
 
     public SlideoutWindow(PushNotification notification, AckService ackService, WindowTracker tracker)
@@ -440,8 +442,10 @@ public class SlideoutWindow : Form, IRemoteAckTarget
 
     private void PositionBottomRight()
     {
-        var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
-        Location = new Point(screen.Right - Width - 12, screen.Bottom - Height - 12);
+        var cursorPos = Cursor.Position;
+        var screen = Screen.FromPoint(cursorPos) ?? Screen.PrimaryScreen!;
+        _targetScreen = screen.WorkingArea;
+        Location = new Point(_targetScreen.Right - Width - 12, _targetScreen.Bottom - Height - 12);
     }
 
     private void StartTtlCountdown(int seconds)
@@ -526,7 +530,9 @@ public class SlideoutWindow : Form, IRemoteAckTarget
 
     private async void SlideUp()
     {
-        var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+        var screen = _targetScreen.IsEmpty
+            ? (Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080))
+            : _targetScreen;
         var finalY = screen.Bottom - Height - 12;
         var startY = screen.Bottom;
         var steps = 12;

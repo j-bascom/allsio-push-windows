@@ -29,8 +29,13 @@ public class PopupWindow : Form, IRemoteAckTarget
         var height = Math.Max(240, notification.PopupHeight ?? 480);
 
         Text = string.IsNullOrWhiteSpace(notification.Title) ? "Allsio Push" : notification.Title;
-        StartPosition = FormStartPosition.CenterScreen;
+        StartPosition = FormStartPosition.Manual;
         ClientSize = new Size(width, height);
+        var cursorPos = Cursor.Position;
+        var screen = (Screen.FromPoint(cursorPos) ?? Screen.PrimaryScreen!).WorkingArea;
+        Location = new Point(
+            screen.X + (screen.Width - Width) / 2,
+            screen.Y + (screen.Height - Height) / 2);
         TopMost = true;
         MinimizeBox = false;
         MaximizeBox = false;
