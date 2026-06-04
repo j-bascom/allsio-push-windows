@@ -326,7 +326,7 @@ public class HistoryWindow : Form
         {
             var n = JsonSerializer.Deserialize<PushNotification>(entry.RawJson);
             if (n == null) return;
-            _router.Route(n);
+            _router.Route(n, persistHistory: false);
         }
         catch (Exception ex)
         {

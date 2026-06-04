@@ -32,7 +32,7 @@ public class NotificationRouter
         _history = history;
     }
 
-    public void Route(PushNotification notification)
+    public void Route(PushNotification notification, bool persistHistory = true)
     {
         // call_ended is a control event, not a notification: it carries no UI
         // and is never persisted or routed to a toast/slideout. It simply closes
@@ -51,18 +51,23 @@ public class NotificationRouter
 
         // Persist to local history in the background; surface the saved entry
         // to subscribers (e.g. open HistoryWindow) without blocking routing.
-        _ = Task.Run(async () =>
+        // Skipped when replaying an existing entry (e.g. clicking a history card)
+        // so re-opening a notification doesn't create a duplicate record.
+        if (persistHistory)
         {
-            var entry = await _history.SaveNotification(notification, receivedAt);
-            if (entry != null)
+            _ = Task.Run(async () =>
             {
-                try { OnEntrySaved?.Invoke(entry); }
-                catch (Exception ex)
+                var entry = await _history.SaveNotification(notification, receivedAt);
+                if (entry != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[Router] OnEntrySaved handler threw: {ex.Message}");
+                    try { OnEntrySaved?.Invoke(entry); }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Router] OnEntrySaved handler threw: {ex.Message}");
+                    }
                 }
-            }
-        });
+            });
+        }
 
         if (notification.TemplateType == "url_tab")
         {
