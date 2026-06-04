@@ -2,34 +2,40 @@ using System.Globalization;
 using AllsioPush.Config;
 using AllsioPush.Models;
 using AllsioPush.Services;
+using Microsoft.UI;
+using Microsoft.UI.Dispatching;
+using Microsoft.UI.Text;
+using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Graphics;
+using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
 
-public class ScreenPopWindow : Form
+public class ScreenPopWindow : WindowEx, IScreenPopTarget
 {
-    private static readonly Color Bg = Color.FromArgb(24, 24, 24);
-    private static readonly Color Surface = Color.FromArgb(36, 36, 36);
-    private static readonly Color BorderColor = Color.FromArgb(55, 55, 55);
-    private static readonly Color TextPrimary = Color.FromArgb(240, 240, 240);
-    private static readonly Color TextMuted = Color.FromArgb(140, 140, 140);
-    private static readonly Color AccentBlue = Color.FromArgb(59, 130, 246);
-    private static readonly Color Green = Color.FromArgb(34, 197, 94);
-    private static readonly Color Amber = Color.FromArgb(251, 191, 36);
-    private static readonly Color Red = Color.FromArgb(239, 68, 68);
+    private static readonly SolidColorBrush Bg = new(ColorHelper.FromArgb(255, 24, 24, 24));
+    private static readonly SolidColorBrush Surface = new(ColorHelper.FromArgb(255, 36, 36, 36));
+    private static readonly SolidColorBrush BorderBrushColor = new(ColorHelper.FromArgb(255, 55, 55, 55));
+    private static readonly SolidColorBrush TextPrimary = new(ColorHelper.FromArgb(255, 240, 240, 240));
+    private static readonly SolidColorBrush TextMuted = new(ColorHelper.FromArgb(255, 140, 140, 140));
+    private static readonly SolidColorBrush AccentBlue = new(ColorHelper.FromArgb(255, 59, 130, 246));
+    private static readonly SolidColorBrush Green = new(ColorHelper.FromArgb(255, 34, 197, 94));
+    private static readonly SolidColorBrush Amber = new(ColorHelper.FromArgb(255, 251, 191, 36));
+    private static readonly SolidColorBrush Red = new(ColorHelper.FromArgb(255, 239, 68, 68));
 
-    private const int FormWidth = 420;
-    private const int ContentWidth = 372;
+    private const int WindowWidth = 420;
 
     private readonly ScreenPopData _data;
     private readonly AppSettings _settings;
     private readonly WindowTracker _tracker;
 
-    private readonly Label _timerLabel;
-    private System.Threading.Timer? _callTimer;
+    private readonly TextBlock _timerLabel;
+    private DispatcherQueueTimer? _callTimer;
     private bool _closing;
-
-    private bool _dragging;
-    private Point _dragOffset;
 
     public string? CallId => _data.CallId;
 
@@ -39,465 +45,311 @@ public class ScreenPopWindow : Form
         _settings = settings;
         _tracker = tracker;
 
-        FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.Manual;
-        ShowInTaskbar = false;
-        TopMost = true;
-        BackColor = BorderColor;
-        Padding = new Padding(1);
-        ClientSize = new Size(FormWidth, 320);
+        Title = "Allsio Screen Pop";
+        ConfigurePresenter();
 
-        var scroll = new Panel
-        {
-            Dock = DockStyle.Fill,
-            AutoScroll = true,
-            BackColor = Bg,
-        };
-
-        var stack = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Padding = new Padding(16),
-            Location = new Point(0, 0),
-        };
-
-        _timerLabel = new Label
+        _timerLabel = new TextBlock
         {
             Text = "0:00",
-            AutoSize = true,
-            ForeColor = Green,
-            Font = new Font(FontFamily.GenericMonospace, 14f, FontStyle.Bold),
-            Anchor = AnchorStyles.Top | AnchorStyles.Right,
-            TextAlign = ContentAlignment.TopRight,
+            Foreground = Green,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 16,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Right,
         };
 
-        stack.Controls.Add(BuildHeader());
-        if (!string.IsNullOrWhiteSpace(_data.Reason)) stack.Controls.Add(BuildReason());
-        if (_data.Phorest != null) stack.Controls.Add(BuildPhorest(_data.Phorest));
-        if (_data.Qbo != null) stack.Controls.Add(BuildQbo(_data.Qbo));
-        if (_data.PriorCalls.Count > 0) stack.Controls.Add(BuildPriorCalls());
-        stack.Controls.Add(BuildButtons());
-        stack.Controls.Add(BuildFooter());
+        var stack = new StackPanel { Spacing = 0 };
+        stack.Children.Add(BuildHeader());
+        if (!string.IsNullOrWhiteSpace(_data.Reason)) stack.Children.Add(BuildReason());
+        if (_data.Phorest != null) stack.Children.Add(BuildPhorest(_data.Phorest));
+        if (_data.Qbo != null) stack.Children.Add(BuildQbo(_data.Qbo));
+        if (_data.PriorCalls.Count > 0) stack.Children.Add(BuildPriorCalls());
+        stack.Children.Add(BuildButtons());
+        stack.Children.Add(BuildFooter());
 
-        scroll.Controls.Add(stack);
-        Controls.Add(scroll);
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(16),
+            Content = stack,
+        };
 
-        SizeToContent(stack);
-        PositionTopRight();
+        var card = new Border
+        {
+            Background = Bg,
+            BorderBrush = BorderBrushColor,
+            BorderThickness = new Thickness(1),
+            Child = scroll,
+        };
 
-        Load += (_, _) =>
+        var root = new Grid { RequestedTheme = ElementTheme.Dark };
+        root.Children.Add(card);
+        Content = root;
+
+        root.Loaded += (_, _) =>
         {
             _tracker.RegisterScreenPop(_data.CallId, this);
+            SizeAndPosition(root);
             StartCallTimer();
         };
-        FormClosed += (_, _) =>
+        Closed += (_, _) =>
         {
-            _callTimer?.Dispose();
+            _callTimer?.Stop();
             _tracker.UnregisterScreenPop(this);
         };
     }
 
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
+    private void ConfigurePresenter()
     {
-        get
+        if (AppWindow.Presenter is OverlappedPresenter p)
         {
-            const int WS_EX_TOOLWINDOW = 0x00000080;
-            var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_TOOLWINDOW;
-            return cp;
+            p.SetBorderAndTitleBar(false, false);
+            p.IsAlwaysOnTop = true;
+            p.IsResizable = false;
+            p.IsMaximizable = false;
+            p.IsMinimizable = false;
         }
+        AppWindow.IsShownInSwitchers = false;
     }
 
-    private Control BuildHeader()
+    private void SizeAndPosition(FrameworkElement root)
     {
-        var header = new TableLayoutPanel
-        {
-            ColumnCount = 2,
-            RowCount = 1,
-            Width = ContentWidth,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Margin = new Padding(0, 0, 0, 12),
-        };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        root.Measure(new global::Windows.Foundation.Size(WindowWidth, double.PositiveInfinity));
+        var h = (int)Math.Clamp(root.DesiredSize.Height, 320, 700);
+        var dpi = this.GetDpiForWindow() / 96.0;
+        var pw = (int)(WindowWidth * dpi);
+        var ph = (int)(h * dpi);
+        AppWindow.Resize(new SizeInt32(pw, ph));
+        var area = DisplayArea.Primary.WorkArea;
+        AppWindow.Move(new PointInt32(area.X + area.Width - pw - 12, area.Y + 12));
+    }
 
-        var info = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Margin = new Padding(0),
-        };
+    private FrameworkElement BuildHeader()
+    {
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+        var info = new StackPanel { Spacing = 2 };
         var name = string.IsNullOrWhiteSpace(_data.CallerName) ? "Unknown Caller" : _data.CallerName!;
-        info.Controls.Add(new Label
+        info.Children.Add(new TextBlock
         {
             Text = "☎  " + name,
-            AutoSize = true,
-            MaximumSize = new Size(ContentWidth - 70, 0),
-            ForeColor = TextPrimary,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 15f, FontStyle.Bold),
-            Margin = new Padding(0),
+            Foreground = TextPrimary,
+            FontSize = 17,
+            FontWeight = FontWeights.Bold,
+            TextWrapping = TextWrapping.Wrap,
         });
-
         if (!string.IsNullOrWhiteSpace(_data.CallerPhone))
-        {
-            info.Controls.Add(new Label
-            {
-                Text = _data.CallerPhone,
-                AutoSize = true,
-                ForeColor = TextMuted,
-                Font = new Font(SystemFonts.DefaultFont.FontFamily, 9.5f),
-                Margin = new Padding(0, 2, 0, 0),
-            });
-        }
-
+            info.Children.Add(new TextBlock { Text = _data.CallerPhone, Foreground = TextMuted, FontSize = 12 });
         if (!string.IsNullOrWhiteSpace(_data.AgentName))
-        {
-            info.Controls.Add(new Label
-            {
-                Text = $"Being handled by {_data.AgentName}",
-                AutoSize = true,
-                ForeColor = TextMuted,
-                Font = new Font(SystemFonts.DefaultFont.FontFamily, 8f),
-                Margin = new Padding(0, 2, 0, 0),
-            });
-        }
+            info.Children.Add(new TextBlock { Text = $"Being handled by {_data.AgentName}", Foreground = TextMuted, FontSize = 10 });
 
-        header.Controls.Add(info, 0, 0);
-        header.Controls.Add(_timerLabel, 1, 0);
-
-        AttachDrag(header);
-        return header;
+        Grid.SetColumn(info, 0);
+        Grid.SetColumn(_timerLabel, 1);
+        grid.Children.Add(info);
+        grid.Children.Add(_timerLabel);
+        return grid;
     }
 
-    private Control BuildReason()
+    private FrameworkElement BuildReason()
     {
-        var card = MakeCard();
-        var col = CardColumn(card);
-        col.Controls.Add(SectionCaption("REASON"));
-        col.Controls.Add(new Label
+        var col = new StackPanel { Spacing = 4 };
+        col.Children.Add(SectionCaption("REASON"));
+        col.Children.Add(new TextBlock
         {
             Text = _data.Reason,
-            AutoSize = true,
-            MaximumSize = new Size(ContentWidth - 24, 0),
-            ForeColor = TextPrimary,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 9.5f),
-            Margin = new Padding(0, 4, 0, 0),
+            Foreground = TextPrimary,
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
         });
-        return card;
+        return MakeCard(col);
     }
 
-    private Control BuildPhorest(PhorestRecord p)
+    private FrameworkElement BuildPhorest(PhorestRecord p)
     {
-        var container = SectionContainer("\U0001F4CB Phorest Record", "MATCHED", Color.FromArgb(13, 148, 136));
-        var card = (Panel)container.Controls[1];
-        var col = CardColumn(card);
-
+        var col = new StackPanel { Spacing = 2 };
         var fullName = string.Join(" ", new[] { p.FirstName, p.LastName }.Where(s => !string.IsNullOrWhiteSpace(s)));
-        if (!string.IsNullOrWhiteSpace(fullName)) col.Controls.Add(Row("Name", fullName));
-        if (!string.IsNullOrWhiteSpace(p.Email)) col.Controls.Add(Row("Email", p.Email));
+        if (!string.IsNullOrWhiteSpace(fullName)) col.Children.Add(Row("Name", fullName));
+        if (!string.IsNullOrWhiteSpace(p.Email)) col.Children.Add(Row("Email", p.Email));
         if (!string.IsNullOrWhiteSpace(p.LastVisitDate))
         {
-            var visit = string.IsNullOrWhiteSpace(p.LastService)
-                ? p.LastVisitDate
-                : $"{p.LastVisitDate} — {p.LastService}";
-            col.Controls.Add(Row("Last visit", visit));
+            var visit = string.IsNullOrWhiteSpace(p.LastService) ? p.LastVisitDate : $"{p.LastVisitDate} — {p.LastService}";
+            col.Children.Add(Row("Last visit", visit));
         }
-        if (!string.IsNullOrWhiteSpace(p.PreferredStylist)) col.Controls.Add(Row("Preferred stylist", p.PreferredStylist));
-        if (p.TotalVisits.HasValue) col.Controls.Add(Row("Total visits", p.TotalVisits.Value.ToString()));
-        if (p.LifetimeValue.HasValue) col.Controls.Add(Row("Lifetime value", "$" + p.LifetimeValue.Value.ToString("F2", CultureInfo.InvariantCulture)));
+        if (!string.IsNullOrWhiteSpace(p.PreferredStylist)) col.Children.Add(Row("Preferred stylist", p.PreferredStylist));
+        if (p.TotalVisits.HasValue) col.Children.Add(Row("Total visits", p.TotalVisits.Value.ToString()));
+        if (p.LifetimeValue.HasValue) col.Children.Add(Row("Lifetime value", "$" + p.LifetimeValue.Value.ToString("F2", CultureInfo.InvariantCulture)));
         if (!string.IsNullOrWhiteSpace(p.Notes))
-        {
-            col.Controls.Add(new Label
-            {
-                Text = p.Notes,
-                AutoSize = true,
-                MaximumSize = new Size(ContentWidth - 24, 0),
-                ForeColor = Amber,
-                Font = new Font(SystemFonts.DefaultFont.FontFamily, 9f, FontStyle.Italic),
-                Margin = new Padding(0, 4, 0, 0),
-            });
-        }
+            col.Children.Add(new TextBlock { Text = p.Notes, Foreground = Amber, FontSize = 12, FontStyle = global::Windows.UI.Text.FontStyle.Italic, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
 
-        return container;
+        return SectionContainer("\U0001F4CB Phorest Record", "MATCHED", ColorHelper.FromArgb(255, 13, 148, 136), col);
     }
 
-    private Control BuildQbo(QboRecord q)
+    private FrameworkElement BuildQbo(QboRecord q)
     {
-        var container = SectionContainer("\U0001F4BC QuickBooks Record", "MATCHED", Green);
-        var card = (Panel)container.Controls[1];
-        var col = CardColumn(card);
-
+        var col = new StackPanel { Spacing = 2 };
         var primary = !string.IsNullOrWhiteSpace(q.DisplayName) ? q.DisplayName
             : !string.IsNullOrWhiteSpace(q.CompanyName) ? q.CompanyName : null;
-        if (!string.IsNullOrWhiteSpace(primary)) col.Controls.Add(Row("Name", primary));
+        if (!string.IsNullOrWhiteSpace(primary)) col.Children.Add(Row("Name", primary));
         if (!string.IsNullOrWhiteSpace(q.CompanyName) && !string.Equals(q.CompanyName, primary, StringComparison.Ordinal))
-            col.Controls.Add(Row("Company", q.CompanyName));
-        if (!string.IsNullOrWhiteSpace(q.Email)) col.Controls.Add(Row("Email", q.Email));
-        if (!string.IsNullOrWhiteSpace(q.Phone)) col.Controls.Add(Row("Phone", q.Phone));
-        if (!string.IsNullOrWhiteSpace(q.BillingAddress)) col.Controls.Add(Row("Billing", q.BillingAddress));
+            col.Children.Add(Row("Company", q.CompanyName));
+        if (!string.IsNullOrWhiteSpace(q.Email)) col.Children.Add(Row("Email", q.Email));
+        if (!string.IsNullOrWhiteSpace(q.Phone)) col.Children.Add(Row("Phone", q.Phone));
+        if (!string.IsNullOrWhiteSpace(q.BillingAddress)) col.Children.Add(Row("Billing", q.BillingAddress));
         if (q.Balance.HasValue)
         {
             var balance = "$" + q.Balance.Value.ToString("F2", CultureInfo.InvariantCulture);
-            var row = Row("Balance", balance);
-            if (q.Balance.Value > 0 && row is Control c && c.Controls.Count > 1)
-                c.Controls[1].ForeColor = Red;
-            col.Controls.Add(row);
+            col.Children.Add(Row("Balance", balance, q.Balance.Value > 0 ? Red : null));
         }
 
-        return container;
+        return SectionContainer("\U0001F4BC QuickBooks Record", "MATCHED", ColorHelper.FromArgb(255, 34, 197, 94), col);
     }
 
-    private Control BuildPriorCalls()
+    private FrameworkElement BuildPriorCalls()
     {
-        var container = SectionContainer("\U0001F4DE Prior Calls", null, Green);
-        var card = (Panel)container.Controls[1];
-        var col = CardColumn(card);
-
+        var col = new StackPanel { Spacing = 2 };
         foreach (var pc in _data.PriorCalls.Take(5))
         {
             var date = pc.CallDate == default ? "" : pc.CallDate.ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture);
             var reason = pc.Reason ?? "";
             if (reason.Length > 40) reason = reason.Substring(0, 40) + "…";
-
             var parts = new[] { date, pc.Duration, reason }.Where(s => !string.IsNullOrWhiteSpace(s));
-            col.Controls.Add(new Label
+            col.Children.Add(new TextBlock
             {
                 Text = string.Join("  |  ", parts),
-                AutoSize = true,
-                MaximumSize = new Size(ContentWidth - 24, 0),
-                ForeColor = TextPrimary,
-                Font = new Font(SystemFonts.DefaultFont.FontFamily, 9f),
-                Margin = new Padding(0, 4, 0, 0),
+                Foreground = TextPrimary,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
             });
-
             if (!string.IsNullOrWhiteSpace(pc.Outcome))
-            {
-                col.Controls.Add(new Label
-                {
-                    Text = pc.Outcome,
-                    AutoSize = true,
-                    MaximumSize = new Size(ContentWidth - 24, 0),
-                    ForeColor = TextMuted,
-                    Font = new Font(SystemFonts.DefaultFont.FontFamily, 8f),
-                    Margin = new Padding(0, 0, 0, 2),
-                });
-            }
+                col.Children.Add(new TextBlock { Text = pc.Outcome, Foreground = TextMuted, FontSize = 10, TextWrapping = TextWrapping.Wrap });
         }
-
-        return container;
+        return SectionContainer("\U0001F4DE Prior Calls", null, default, col);
     }
 
-    private Control BuildButtons()
+    private FrameworkElement BuildButtons()
     {
-        var panel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Margin = new Padding(0, 4, 0, 0),
-        };
+        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
 
         var openBtn = MakeButton("\U0001F310  Open in Browser", AccentBlue);
         openBtn.Click += (_, _) => OpenInBrowser();
-        panel.Controls.Add(openBtn);
+        panel.Children.Add(openBtn);
 
         if (!string.IsNullOrWhiteSpace(_data.CallerPhone))
         {
             var copyBtn = MakeButton("\U0001F4CB  Copy Number", Surface);
             copyBtn.Click += async (_, _) =>
             {
-                try { Clipboard.SetText(_data.CallerPhone!); } catch { }
-                var original = copyBtn.Text;
-                copyBtn.Text = "Copied!";
+                try
+                {
+                    var dp = new DataPackage();
+                    dp.SetText(_data.CallerPhone!);
+                    Clipboard.SetContent(dp);
+                }
+                catch { }
+                copyBtn.Content = "Copied!";
                 await Task.Delay(2000);
-                if (!IsDisposed) copyBtn.Text = original;
+                if (!_closing) copyBtn.Content = "\U0001F4CB  Copy Number";
             };
-            panel.Controls.Add(copyBtn);
+            panel.Children.Add(copyBtn);
         }
 
         var closeBtn = MakeButton("✕  Close", Surface);
-        closeBtn.Click += (_, _) => BeginFadeOut();
-        panel.Controls.Add(closeBtn);
+        closeBtn.Click += (_, _) => BeginHide();
+        panel.Children.Add(closeBtn);
 
         return panel;
     }
 
-    private Control BuildFooter()
+    private FrameworkElement BuildFooter()
     {
-        var panel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Margin = new Padding(0, 8, 0, 0),
-        };
-        panel.Controls.Add(new Panel
-        {
-            Width = ContentWidth,
-            Height = 1,
-            BackColor = BorderColor,
-            Margin = new Padding(0, 0, 0, 6),
-        });
-        panel.Controls.Add(new Label
+        var panel = new StackPanel { Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
+        panel.Children.Add(new Border { Height = 1, Background = BorderBrushColor });
+        panel.Children.Add(new TextBlock
         {
             Text = "Call started " + _data.CallStarted.ToString("h:mm tt", CultureInfo.InvariantCulture),
-            AutoSize = true,
-            ForeColor = TextMuted,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 8f),
-            Margin = new Padding(0),
+            Foreground = TextMuted,
+            FontSize = 10,
         });
         return panel;
     }
 
-    private Panel SectionContainer(string title, string? badge, Color badgeColor)
+    private FrameworkElement SectionContainer(string title, string? badge, global::Windows.UI.Color badgeColor, UIElement body)
     {
-        var wrap = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Margin = new Padding(0, 0, 0, 12),
-        };
+        var wrap = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 12) };
 
-        var headerRow = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-            Margin = new Padding(0, 0, 0, 4),
-        };
-        headerRow.Controls.Add(new Label
+        var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        headerRow.Children.Add(new TextBlock
         {
             Text = title,
-            AutoSize = true,
-            ForeColor = TextPrimary,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 9.5f, FontStyle.Bold),
-            Margin = new Padding(0, 2, 0, 0),
+            Foreground = TextPrimary,
+            FontSize = 13,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
         });
         if (!string.IsNullOrWhiteSpace(badge))
         {
-            headerRow.Controls.Add(new Label
+            headerRow.Children.Add(new Border
             {
-                Text = badge,
-                AutoSize = true,
-                BackColor = badgeColor,
-                ForeColor = Color.White,
-                Font = new Font(SystemFonts.DefaultFont.FontFamily, 7f, FontStyle.Bold),
-                Padding = new Padding(4, 2, 4, 2),
-                Margin = new Padding(8, 2, 0, 0),
+                Background = new SolidColorBrush(badgeColor),
+                Padding = new Thickness(4, 2, 4, 2),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock { Text = badge, Foreground = new SolidColorBrush(Colors.White), FontSize = 9, FontWeight = FontWeights.Bold },
             });
         }
 
-        wrap.Controls.Add(headerRow);
-        wrap.Controls.Add(MakeCard());
+        wrap.Children.Add(headerRow);
+        wrap.Children.Add(MakeCard(body));
         return wrap;
     }
 
-    private static Panel MakeCard() => new Panel
+    private static Border MakeCard(UIElement child) => new()
     {
-        Width = ContentWidth,
-        AutoSize = true,
-        AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        BackColor = Surface,
-        Padding = new Padding(12),
-        Margin = new Padding(0, 0, 0, 12),
+        Background = Surface,
+        Padding = new Thickness(12),
+        CornerRadius = new CornerRadius(4),
+        Child = child,
     };
 
-    private static FlowLayoutPanel CardColumn(Panel card)
-    {
-        var col = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Surface,
-            Margin = new Padding(0),
-            Dock = DockStyle.Top,
-        };
-        card.Controls.Add(col);
-        return col;
-    }
-
-    private static Label SectionCaption(string text) => new Label
+    private static TextBlock SectionCaption(string text) => new()
     {
         Text = text,
-        AutoSize = true,
-        ForeColor = TextMuted,
-        Font = new Font(SystemFonts.DefaultFont.FontFamily, 7.5f, FontStyle.Bold),
-        Margin = new Padding(0),
+        Foreground = TextMuted,
+        FontSize = 11,
+        FontWeight = FontWeights.Bold,
     };
 
-    private Control Row(string label, string? value)
+    private FrameworkElement Row(string label, string? value, SolidColorBrush? valueColor = null)
     {
-        var row = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Surface,
-            Margin = new Padding(0, 1, 0, 1),
-        };
-        row.Controls.Add(new Label
-        {
-            Text = label + ":",
-            AutoSize = true,
-            ForeColor = TextMuted,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 9f),
-            Margin = new Padding(0, 0, 6, 0),
-        });
-        row.Controls.Add(new Label
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        row.Children.Add(new TextBlock { Text = label + ":", Foreground = TextMuted, FontSize = 12 });
+        row.Children.Add(new TextBlock
         {
             Text = value ?? "",
-            AutoSize = true,
-            MaximumSize = new Size(ContentWidth - 110, 0),
-            ForeColor = TextPrimary,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 9f, FontStyle.Bold),
-            Margin = new Padding(0),
+            Foreground = valueColor ?? TextPrimary,
+            FontSize = 12,
+            FontWeight = FontWeights.Bold,
+            TextWrapping = TextWrapping.Wrap,
         });
         return row;
     }
 
-    private static Button MakeButton(string text, Color back)
+    private static Button MakeButton(string text, SolidColorBrush back) => new()
     {
-        var btn = new Button
-        {
-            Text = text,
-            Width = ContentWidth,
-            Height = 38,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = back,
-            ForeColor = TextPrimary,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 9.5f, FontStyle.Bold),
-            Margin = new Padding(0, 0, 0, 8),
-            TabStop = false,
-        };
-        btn.FlatAppearance.BorderColor = BorderColor;
-        btn.FlatAppearance.BorderSize = 1;
-        return btn;
-    }
+        Content = text,
+        Background = back,
+        Foreground = TextPrimary,
+        BorderBrush = BorderBrushColor,
+        BorderThickness = new Thickness(1),
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        HorizontalContentAlignment = HorizontalAlignment.Center,
+        Height = 38,
+        FontWeight = FontWeights.SemiBold,
+    };
 
     private void OpenInBrowser()
     {
@@ -518,66 +370,18 @@ public class ScreenPopWindow : Form
         }
     }
 
-    private void SizeToContent(Control stack)
-    {
-        var preferred = stack.PreferredSize.Height;
-        var h = Math.Max(320, Math.Min(700, preferred));
-        ClientSize = new Size(FormWidth, h);
-    }
-
-    private void PositionTopRight()
-    {
-        var screen = Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen!;
-        var wa = screen.WorkingArea;
-        Location = new Point(wa.Right - Width - 12, wa.Top + 12);
-    }
-
-    private void AttachDrag(Control control)
-    {
-        control.MouseDown += OnDragMouseDown;
-        control.MouseMove += OnDragMouseMove;
-        control.MouseUp += OnDragMouseUp;
-        foreach (Control child in control.Controls)
-            AttachDrag(child);
-    }
-
-    private void OnDragMouseDown(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Left) return;
-        _dragging = true;
-        var screenPoint = ((Control)sender!).PointToScreen(e.Location);
-        _dragOffset = new Point(screenPoint.X - Location.X, screenPoint.Y - Location.Y);
-    }
-
-    private void OnDragMouseMove(object? sender, MouseEventArgs e)
-    {
-        if (!_dragging) return;
-        var screenPoint = ((Control)sender!).PointToScreen(e.Location);
-        Location = new Point(screenPoint.X - _dragOffset.X, screenPoint.Y - _dragOffset.Y);
-    }
-
-    private void OnDragMouseUp(object? sender, MouseEventArgs e) => _dragging = false;
-
     private void StartCallTimer()
     {
-        _callTimer = new System.Threading.Timer(
-            OnCallTimerTick, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
-    }
-
-    private void OnCallTimerTick(object? state)
-    {
-        if (IsDisposed || _closing) return;
-        try
-        {
-            if (InvokeRequired) BeginInvoke((Action)UpdateTimerLabel);
-            else UpdateTimerLabel();
-        }
-        catch { }
+        _callTimer = DispatcherQueue.CreateTimer();
+        _callTimer.Interval = TimeSpan.FromSeconds(1);
+        _callTimer.Tick += (_, _) => UpdateTimerLabel();
+        _callTimer.Start();
+        UpdateTimerLabel();
     }
 
     private void UpdateTimerLabel()
     {
-        if (IsDisposed) return;
+        if (_closing) return;
         var elapsed = DateTime.Now - _data.CallStarted;
         if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
         var minutes = (int)elapsed.TotalMinutes;
@@ -586,33 +390,14 @@ public class ScreenPopWindow : Form
 
     public void CallEnded()
     {
-        if (IsDisposed) return;
-        if (InvokeRequired) { BeginInvoke((Action)CallEnded); return; }
-        BeginFadeOut();
+        DispatcherQueue.TryEnqueue(BeginHide);
     }
 
-    private void BeginFadeOut()
+    private void BeginHide()
     {
         if (_closing) return;
         _closing = true;
-        _callTimer?.Dispose();
-        var fade = new System.Windows.Forms.Timer { Interval = 15 };
-        fade.Tick += OnFadeTick;
-        fade.Start();
-    }
-
-    private void OnFadeTick(object? sender, EventArgs e)
-    {
-        var timer = (System.Windows.Forms.Timer)sender!;
-        if (Opacity <= 0.05)
-        {
-            timer.Stop();
-            timer.Dispose();
-            Close();
-        }
-        else
-        {
-            Opacity -= 0.1;
-        }
+        _callTimer?.Stop();
+        Close();
     }
 }

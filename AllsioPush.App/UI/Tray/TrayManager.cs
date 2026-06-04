@@ -1,28 +1,26 @@
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
+using System.Drawing;
+using System.Reflection;
+using System.Windows.Input;
 using AllsioPush.Config;
+using H.NotifyIcon;
+using Microsoft.UI.Xaml.Controls;
 
 namespace AllsioPush.UI.Tray;
 
 public class TrayManager : IDisposable
 {
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool DestroyIcon(IntPtr handle);
-
-    private static readonly Bitmap? OnImage = LoadEmbeddedImage("icon-on-128.png");
-    private static readonly Bitmap? OffImage = LoadEmbeddedImage("icon-off-128.png");
-
-    private readonly NotifyIcon _notifyIcon;
+    private readonly TaskbarIcon _icon;
     private readonly AppSettings _settings;
-    private bool _connected = false;
-    private bool _signedIn = false;
-    private IReadOnlyList<string> _channels = Array.Empty<string>();
-    private IntPtr _iconHandle = IntPtr.Zero;
+    private readonly Icon _onIcon;
+    private readonly Icon _offIcon;
 
-    private ToolStripMenuItem? _statusItem;
-    private ToolStripMenuItem? _channelsItem;
-    private ToolStripMenuItem? _authItem;
+    private bool _connected;
+    private bool _signedIn;
+    private IReadOnlyList<string> _channels = Array.Empty<string>();
+
+    private MenuFlyoutItem _statusItem = null!;
+    private MenuFlyoutSubItem _channelsItem = null!;
+    private MenuFlyoutItem _authItem = null!;
 
     public event EventHandler? OnOpenSettings;
     public event EventHandler? OnOpenHistory;
@@ -34,57 +32,80 @@ public class TrayManager : IDisposable
     public TrayManager(AppSettings settings)
     {
         _settings = settings;
-        _notifyIcon = new NotifyIcon
+        _onIcon = LoadIcon("icon-on-128.png", "icon-on.ico");
+        _offIcon = LoadIcon("icon-off-128.png", "icon-off.ico");
+
+        _icon = new TaskbarIcon
         {
-            Text = "Allsio Push",
-            Visible = true,
-            Icon = CreateTrayIcon(false),
+            ToolTipText = "Allsio Push",
+            Icon = _offIcon,
+            ContextFlyout = BuildMenu(),
+            LeftClickCommand = new DelegateCommand(() => OnOpenHistory?.Invoke(this, EventArgs.Empty)),
         };
-
-        BuildContextMenu();
-        _notifyIcon.MouseClick += (s, e) =>
-        {
-            if (e.Button == MouseButtons.Left)
-                OnOpenHistory?.Invoke(this, EventArgs.Empty);
-        };
-    }
-
-    private void BuildContextMenu()
-    {
-        var menu = new ContextMenuStrip();
-
-        _statusItem = new ToolStripMenuItem("● Not signed in") { Enabled = false, Name = "statusItem" };
-        _channelsItem = new ToolStripMenuItem("Channels") { Name = "channelsItem" };
-
-        _authItem = new ToolStripMenuItem("Sign Out") { Name = "authItem" };
-        _authItem.Click += (s, e) =>
-        {
-            if (_signedIn) OnSignOut?.Invoke(this, EventArgs.Empty);
-            else OnSignIn?.Invoke(this, EventArgs.Empty);
-        };
-
-        menu.Items.Add(_statusItem);
-        menu.Items.Add(_channelsItem);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Notification History", null, (s, e) => OnOpenHistory?.Invoke(this, EventArgs.Empty));
-        menu.Items.Add("Settings", null, (s, e) => OnOpenSettings?.Invoke(this, EventArgs.Empty));
-        menu.Items.Add("Check for Updates", null, (s, e) => OnCheckForUpdates?.Invoke(this, EventArgs.Empty));
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(_authItem);
-        menu.Items.Add("Exit", null, (s, e) => OnExit?.Invoke(this, EventArgs.Empty));
-
-        _notifyIcon.ContextMenuStrip = menu;
+        _icon.ForceCreate();
 
         RefreshStatusItem();
         RebuildChannelsSubmenu();
     }
 
+    private MenuFlyout BuildMenu()
+    {
+        var menu = new MenuFlyout();
+
+        // NOTE: For a code-created TaskbarIcon (not in a XAML tree), MenuFlyoutItem.Click
+        // events do not fire reliably — use Command bindings instead.
+        _statusItem = new MenuFlyoutItem { Text = "Not signed in", IsEnabled = false };
+        _channelsItem = new MenuFlyoutSubItem { Text = "Channels" };
+        _authItem = new MenuFlyoutItem
+        {
+            Text = "Sign Out",
+            Command = new DelegateCommand(() =>
+            {
+                if (_signedIn) OnSignOut?.Invoke(this, EventArgs.Empty);
+                else OnSignIn?.Invoke(this, EventArgs.Empty);
+            }),
+        };
+
+        var history = new MenuFlyoutItem
+        {
+            Text = "Notification History",
+            Command = new DelegateCommand(() => OnOpenHistory?.Invoke(this, EventArgs.Empty)),
+        };
+        var settings = new MenuFlyoutItem
+        {
+            Text = "Settings",
+            Command = new DelegateCommand(() => OnOpenSettings?.Invoke(this, EventArgs.Empty)),
+        };
+        var updates = new MenuFlyoutItem
+        {
+            Text = "Check for Updates",
+            Command = new DelegateCommand(() => OnCheckForUpdates?.Invoke(this, EventArgs.Empty)),
+        };
+        var exit = new MenuFlyoutItem
+        {
+            Text = "Exit",
+            Command = new DelegateCommand(() => OnExit?.Invoke(this, EventArgs.Empty)),
+        };
+
+        menu.Items.Add(_statusItem);
+        menu.Items.Add(_channelsItem);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(history);
+        menu.Items.Add(settings);
+        menu.Items.Add(updates);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(_authItem);
+        menu.Items.Add(exit);
+        return menu;
+    }
+
     public void SetConnected(bool connected)
     {
         _connected = connected;
-        _notifyIcon.Icon = CreateTrayIcon(connected);
-        _notifyIcon.Text = connected ? "Allsio Push — Connected" : "Allsio Push — Disconnected";
-
+        var icon = connected ? _onIcon : _offIcon;
+        _icon.Icon = icon;
+        _icon.UpdateIcon(icon);
+        _icon.ToolTipText = connected ? "Allsio Push — Connected" : "Allsio Push — Disconnected";
         RefreshStatusItem();
         RebuildChannelsSubmenu();
     }
@@ -92,142 +113,86 @@ public class TrayManager : IDisposable
     public void SetAuthState(bool signedIn)
     {
         _signedIn = signedIn;
-        if (_authItem != null) _authItem.Text = signedIn ? "Sign Out" : "Sign In";
+        _authItem.Text = signedIn ? "Sign Out" : "Sign In";
         RefreshStatusItem();
-    }
-
-    // Update the status line. When not signed in it overrides the Pusher
-    // connection state and always reads "Not signed in".
-    private void RefreshStatusItem()
-    {
-        if (_statusItem == null) return;
-        if (!_signedIn)
-        {
-            _statusItem.Text = "● Not signed in";
-            _statusItem.ForeColor = Color.Gray;
-        }
-        else
-        {
-            _statusItem.Text = _connected ? "● Connected" : "● Disconnected";
-            _statusItem.ForeColor = _connected ? Color.Green : Color.Gray;
-        }
     }
 
     public void UpdateChannels(IReadOnlyList<string> channels)
     {
         _channels = channels ?? Array.Empty<string>();
-
-        var menu = _notifyIcon.ContextMenuStrip;
-        if (menu != null && menu.IsHandleCreated && menu.InvokeRequired)
-        {
-            menu.BeginInvoke(RebuildChannelsSubmenu);
-            return;
-        }
         RebuildChannelsSubmenu();
+    }
+
+    private void RefreshStatusItem()
+    {
+        if (!_signedIn)
+            _statusItem.Text = "Not signed in";
+        else
+            _statusItem.Text = _connected ? "Connected" : "Disconnected";
     }
 
     private void RebuildChannelsSubmenu()
     {
-        if (_channelsItem == null) return;
-
-        _channelsItem.DropDownItems.Clear();
-
+        _channelsItem.Items.Clear();
         if (!_connected)
         {
-            _channelsItem.DropDownItems.Add(new ToolStripMenuItem("Not connected") { Enabled = false });
+            _channelsItem.Items.Add(new MenuFlyoutItem { Text = "Not connected", IsEnabled = false });
         }
         else if (_channels.Count == 0)
         {
-            _channelsItem.DropDownItems.Add(new ToolStripMenuItem("Subscribing…") { Enabled = false });
+            _channelsItem.Items.Add(new MenuFlyoutItem { Text = "Subscribing…", IsEnabled = false });
         }
         else
         {
             foreach (var raw in _channels)
-            {
-                _channelsItem.DropDownItems.Add(new ToolStripMenuItem(FormatChannelName(raw)) { Enabled = false });
-            }
+                _channelsItem.Items.Add(new MenuFlyoutItem
+                {
+                    Text = string.IsNullOrWhiteSpace(raw) ? "(unknown)" : raw,
+                    IsEnabled = false,
+                });
         }
-    }
-
-    private static string FormatChannelName(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return "(unknown)";
-
-        const string groupMarker = "-group-";
-        const string userMarker = "-user-";
-
-        int gi = raw.IndexOf(groupMarker, StringComparison.OrdinalIgnoreCase);
-        if (gi >= 0)
-        {
-            var name = raw[(gi + groupMarker.Length)..];
-            return $"Group: {name}";
-        }
-
-        if (raw.Contains(userMarker, StringComparison.OrdinalIgnoreCase))
-            return "Personal Channel";
-
-        return raw.Length > 40 ? raw[..40] : raw;
-    }
-
-    private static Bitmap? LoadEmbeddedImage(string logicalName)
-    {
-        try
-        {
-            using var stream = typeof(TrayManager).Assembly.GetManifestResourceStream(logicalName);
-            return stream == null ? null : new Bitmap(stream);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private Icon CreateTrayIcon(bool connected)
-    {
-        const int size = 32;
-        using var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.Clear(Color.Transparent);
-            var src = connected ? OnImage : OffImage;
-            if (src != null)
-            {
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.DrawImage(src, new Rectangle(0, 0, size, size));
-            }
-            else
-            {
-                var color = connected ? Color.FromArgb(34, 197, 94) : Color.FromArgb(156, 163, 175);
-                using var brush = new SolidBrush(color);
-                g.FillEllipse(brush, 4, 4, size - 8, size - 8);
-            }
-        }
-
-        // Release the previous native icon handle before creating a new one.
-        if (_iconHandle != IntPtr.Zero)
-        {
-            DestroyIcon(_iconHandle);
-            _iconHandle = IntPtr.Zero;
-        }
-        _iconHandle = bmp.GetHicon();
-        return Icon.FromHandle(_iconHandle);
     }
 
     public void ShowBalloon(string title, string message, int timeoutMs = 3000)
     {
-        _notifyIcon.ShowBalloonTip(timeoutMs, title, message, ToolTipIcon.Info);
+        try { _icon.ShowNotification(title: title, message: message); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Tray] balloon failed: {ex.Message}"); }
+    }
+
+    private static Icon LoadIcon(string embeddedPng, string icoFallback)
+    {
+        // Prefer the high-res embedded PNG rendered to a real HICON; the tray needs a
+        // System.Drawing.Icon (synchronous HICON) — a BitmapImage decodes async and the
+        // tray icon ends up blank or fails to swap on state changes.
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream(embeddedPng);
+            if (stream != null)
+            {
+                using var bmp = new Bitmap(stream);
+                return Icon.FromHandle(bmp.GetHicon());
+            }
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Tray] PNG icon load failed: {ex.Message}"); }
+
+        var path = Path.Combine(AppContext.BaseDirectory, "Resources", icoFallback);
+        return new Icon(path);
     }
 
     public void Dispose()
     {
-        _notifyIcon.Visible = false;
-        _notifyIcon.Dispose();
-        if (_iconHandle != IntPtr.Zero)
-        {
-            DestroyIcon(_iconHandle);
-            _iconHandle = IntPtr.Zero;
-        }
+        try { _icon.Dispose(); } catch { }
+        try { _onIcon.Dispose(); } catch { }
+        try { _offIcon.Dispose(); } catch { }
+    }
+
+    private sealed class DelegateCommand : ICommand
+    {
+        private readonly Action _action;
+        public DelegateCommand(Action action) => _action = action;
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
+        public bool CanExecute(object? parameter) => true;
+        public void Execute(object? parameter) => _action();
     }
 }

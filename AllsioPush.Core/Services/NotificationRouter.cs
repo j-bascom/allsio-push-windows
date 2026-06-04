@@ -1,7 +1,6 @@
 using System.Globalization;
 using AllsioPush.Config;
 using AllsioPush.Models;
-using AllsioPush.UI.Windows;
 
 namespace AllsioPush.Services;
 
@@ -13,6 +12,7 @@ public class NotificationRouter
     private readonly AckService _ackService;
     private readonly WindowTracker _windowTracker;
     private readonly HistoryService _history;
+    private readonly INotificationPresenter _presenter;
 
     public event Action<HistoryEntry>? OnEntrySaved;
 
@@ -22,7 +22,8 @@ public class NotificationRouter
         ToastService toastService,
         AckService ackService,
         WindowTracker windowTracker,
-        HistoryService history)
+        HistoryService history,
+        INotificationPresenter presenter)
     {
         _settings = settings;
         _uiContext = uiContext;
@@ -30,6 +31,7 @@ public class NotificationRouter
         _ackService = ackService;
         _windowTracker = windowTracker;
         _history = history;
+        _presenter = presenter;
     }
 
     public void Route(PushNotification notification, bool persistHistory = true)
@@ -201,14 +203,7 @@ public class NotificationRouter
 
     private void OpenUrl(string url)
     {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true,
-            });
-        }
+        try { _presenter.OpenUrl(url); }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Router] OpenUrl failed: {ex.Message}");
@@ -217,11 +212,7 @@ public class NotificationRouter
 
     private void OpenPopupWindow(PushNotification notification)
     {
-        try
-        {
-            var win = new PopupWindow(notification, _ackService, _windowTracker);
-            win.Show();
-        }
+        try { _presenter.ShowPopup(notification); }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Router] OpenPopupWindow failed: {ex.Message}");
@@ -230,11 +221,7 @@ public class NotificationRouter
 
     private void OpenSlideoutWindow(PushNotification notification)
     {
-        try
-        {
-            var win = new SlideoutWindow(notification, _ackService, _windowTracker);
-            win.Show();
-        }
+        try { _presenter.ShowSlideout(notification); }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Router] OpenSlideoutWindow failed: {ex.Message}");
@@ -243,11 +230,7 @@ public class NotificationRouter
 
     private void OpenScreenPopWindow(ScreenPopData data)
     {
-        try
-        {
-            var win = new ScreenPopWindow(data, _settings, _windowTracker);
-            win.Show();
-        }
+        try { _presenter.ShowScreenPop(data); }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Router] OpenScreenPopWindow failed: {ex.Message}");
