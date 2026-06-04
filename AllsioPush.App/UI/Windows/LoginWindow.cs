@@ -80,6 +80,15 @@ public class LoginWindow : Form
 
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
 
+            _webView.CoreWebView2.NewWindowRequested += (s, e) =>
+            {
+                if (e.Uri.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
+                {
+                    e.Handled = true;
+                    HandleAllsioPushUri(e.Uri);
+                }
+            };
+
             _loadingLabel.Visible = false;
             _webView.Visible = true;
 
@@ -95,10 +104,12 @@ public class LoginWindow : Form
         }
     }
 
+    private string BuildLoginUrl()
+        => $"{_settings.AdminBase}/extension-login?redirect=allsio-push://auth";
+
     private void Navigate()
     {
-        var url = $"{_settings.AdminBase}/extension-login?redirect=allsio-push://auth";
-        _webView.CoreWebView2.Navigate(url);
+        _webView.CoreWebView2.Navigate(BuildLoginUrl());
     }
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
@@ -107,9 +118,15 @@ public class LoginWindow : Form
 
         if (e.Uri.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
         {
+            System.Diagnostics.Debug.WriteLine("[LoginWindow] Intercepted allsio-push:// auth redirect");
             e.Cancel = true;
-            _ = HandleAuthRedirect(e.Uri);
+            HandleAllsioPushUri(e.Uri);
         }
+    }
+
+    private void HandleAllsioPushUri(string uri)
+    {
+        _ = HandleAuthRedirect(uri);
     }
 
     private async Task HandleAuthRedirect(string uri)

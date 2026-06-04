@@ -24,7 +24,7 @@ public class AuthService
         try
         {
             var request = new HttpRequestMessage(HttpMethod.Post,
-                $"{_settings.ApiBase}/api/extension/login");
+                $"{_settings.ApiBase}/api/extension/exchange");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new { deviceType = "windows_app" }),
