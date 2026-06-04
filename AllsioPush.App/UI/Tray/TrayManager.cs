@@ -3,9 +3,7 @@ using System.Reflection;
 using System.Windows.Input;
 using AllsioPush.Config;
 using H.NotifyIcon;
-using Microsoft.UI;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 
 namespace AllsioPush.UI.Tray;
 
@@ -56,7 +54,7 @@ public class TrayManager : IDisposable
 
         // NOTE: For a code-created TaskbarIcon (not in a XAML tree), MenuFlyoutItem.Click
         // events do not fire reliably — use Command bindings instead.
-        _statusItem = new MenuFlyoutItem { Text = "● Not signed in", IsEnabled = false };
+        _statusItem = new MenuFlyoutItem { Text = "Not signed in", IsEnabled = false };
         _channelsItem = new MenuFlyoutSubItem { Text = "Channels" };
         _authItem = new MenuFlyoutItem
         {
@@ -128,15 +126,9 @@ public class TrayManager : IDisposable
     private void RefreshStatusItem()
     {
         if (!_signedIn)
-        {
-            _statusItem.Text = "● Not signed in";
-            _statusItem.Foreground = new SolidColorBrush(Colors.Gray);
-        }
+            _statusItem.Text = "Not signed in";
         else
-        {
-            _statusItem.Text = _connected ? "● Connected" : "● Disconnected";
-            _statusItem.Foreground = new SolidColorBrush(_connected ? Colors.SeaGreen : Colors.Gray);
-        }
+            _statusItem.Text = _connected ? "Connected" : "Disconnected";
     }
 
     private void RebuildChannelsSubmenu()
@@ -153,19 +145,12 @@ public class TrayManager : IDisposable
         else
         {
             foreach (var raw in _channels)
-                _channelsItem.Items.Add(new MenuFlyoutItem { Text = FormatChannelName(raw), IsEnabled = false });
+                _channelsItem.Items.Add(new MenuFlyoutItem
+                {
+                    Text = string.IsNullOrWhiteSpace(raw) ? "(unknown)" : raw,
+                    IsEnabled = false,
+                });
         }
-    }
-
-    private static string FormatChannelName(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return "(unknown)";
-        const string groupMarker = "-group-";
-        const string userMarker = "-user-";
-        int gi = raw.IndexOf(groupMarker, StringComparison.OrdinalIgnoreCase);
-        if (gi >= 0) return $"Group: {raw[(gi + groupMarker.Length)..]}";
-        if (raw.Contains(userMarker, StringComparison.OrdinalIgnoreCase)) return "Personal Channel";
-        return raw.Length > 40 ? raw[..40] : raw;
     }
 
     public void ShowBalloon(string title, string message, int timeoutMs = 3000)
