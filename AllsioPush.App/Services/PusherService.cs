@@ -221,6 +221,32 @@ public class PusherService : IDisposable
             }
         }
 
+        // Capture every scalar field so downstream consumers (e.g. the screen
+        // pop's CRM extraction) can read fields not mapped to a property.
+        foreach (var prop in obj.Properties())
+        {
+            var t = prop.Value.Type;
+            if (t == JTokenType.Object || t == JTokenType.Array || t == JTokenType.Null)
+                continue;
+            n.Extras[prop.Name] = (string?)prop.Value;
+        }
+
+        if ((obj["priorCalls"] ?? obj["prior_calls"]) is JArray priorArr)
+        {
+            foreach (var c in priorArr)
+            {
+                DateTime.TryParse((string?)(c["callDate"] ?? c["call_date"]), out var when);
+                n.PriorCalls.Add(new PriorCall
+                {
+                    CallDate = when,
+                    Duration = (string?)c["duration"],
+                    Reason = (string?)c["reason"],
+                    Outcome = (string?)c["outcome"],
+                    AgentName = (string?)(c["agentName"] ?? c["agent_name"]),
+                });
+            }
+        }
+
         return n;
     }
 

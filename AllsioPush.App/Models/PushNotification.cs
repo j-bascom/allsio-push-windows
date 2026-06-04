@@ -29,6 +29,13 @@ public class PushNotification
     public string? SenderName { get; set; }
     public string? SenderPhone { get; set; }
     public string? ConversationId { get; set; }
+
+    // Scalar payload fields not mapped to a dedicated property (e.g. callId,
+    // agentName, phorest_*/qbo_* CRM fields). Keyed by their original JSON name.
+    public Dictionary<string, string?> Extras { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // Prior call history carried by caller_card notifications.
+    public List<PriorCall> PriorCalls { get; set; } = new();
 }
 
 public class NotificationButton
