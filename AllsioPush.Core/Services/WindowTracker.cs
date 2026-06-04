@@ -1,17 +1,9 @@
-using AllsioPush.UI.Windows;
-
 namespace AllsioPush.Services;
-
-public interface IRemoteAckTarget
-{
-    string? NotificationId { get; }
-    void RemoteAcknowledged(string acknowledgedBy);
-}
 
 public class WindowTracker
 {
     private readonly List<IRemoteAckTarget> _targets = new();
-    private readonly Dictionary<string, List<ScreenPopWindow>> _screenPops = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<IScreenPopTarget>> _screenPops = new(StringComparer.Ordinal);
     private readonly object _lock = new();
 
     public void Register(IRemoteAckTarget target)
@@ -44,21 +36,21 @@ public class WindowTracker
         }
     }
 
-    public void RegisterScreenPop(string? callId, ScreenPopWindow window)
+    public void RegisterScreenPop(string? callId, IScreenPopTarget window)
     {
         if (string.IsNullOrWhiteSpace(callId)) return;
         lock (_lock)
         {
             if (!_screenPops.TryGetValue(callId, out var list))
             {
-                list = new List<ScreenPopWindow>();
+                list = new List<IScreenPopTarget>();
                 _screenPops[callId] = list;
             }
             list.Add(window);
         }
     }
 
-    public void UnregisterScreenPop(ScreenPopWindow window)
+    public void UnregisterScreenPop(IScreenPopTarget window)
     {
         lock (_lock)
         {
@@ -75,7 +67,7 @@ public class WindowTracker
     {
         if (string.IsNullOrWhiteSpace(callId)) return;
 
-        ScreenPopWindow[] snapshot;
+        IScreenPopTarget[] snapshot;
         lock (_lock)
         {
             if (!_screenPops.TryGetValue(callId, out var list)) return;

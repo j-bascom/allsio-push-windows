@@ -1,33 +1,29 @@
 using System.Reflection;
 using AllsioPush.Config;
 using AllsioPush.Models;
+using Microsoft.UI;
+using Microsoft.UI.Text;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
 
-public class SettingsWindow : Form
+public class SettingsWindow : WindowEx
 {
-    private static readonly Color BgColor = Color.FromArgb(24, 24, 24);
-    private static readonly Color SurfaceColor = Color.FromArgb(36, 36, 36);
-    private static readonly Color BorderColor = Color.FromArgb(55, 55, 55);
-    private static readonly Color TextPrimary = Color.FromArgb(240, 240, 240);
-    private static readonly Color TextMuted = Color.FromArgb(140, 140, 140);
-    private static readonly Color AccentColor = Color.FromArgb(59, 130, 246);
-    private static readonly Color DangerColor = Color.FromArgb(220, 38, 38);
-    private static readonly Color AmberColor = Color.FromArgb(217, 119, 6);
-    private static readonly Color SegmentSelectedBg = Color.FromArgb(50, 50, 50);
-    private static readonly Color SegmentUnselectedBg = Color.FromArgb(28, 28, 28);
+    private static readonly SolidColorBrush TextMuted = new(ColorHelper.FromArgb(255, 140, 140, 140));
+    private static readonly SolidColorBrush AmberColor = new(ColorHelper.FromArgb(255, 217, 119, 6));
+    private static readonly SolidColorBrush GreenColor = new(ColorHelper.FromArgb(255, 34, 197, 94));
+    private static readonly SolidColorBrush DangerColor = new(ColorHelper.FromArgb(255, 220, 38, 38));
 
     private readonly AppSettings _settings;
     private readonly AuthSession? _session;
     private readonly Action _onSignOut;
 
-    private Button? _prodButton;
-    private Button? _devButton;
-    private Label? _envWarning;
-    private Label? _envRestartNotice;
-    private Button? _showImmediateButton;
-    private Button? _deferToastButton;
-    private Label? _displayModeDesc;
+    private TextBlock? _envWarning;
+    private TextBlock? _envRestartNotice;
+    private TextBlock? _displayModeDesc;
 
     public SettingsWindow(AppSettings settings, AuthSession? session, Action onSignOut)
     {
@@ -35,299 +31,192 @@ public class SettingsWindow : Form
         _session = session;
         _onSignOut = onSignOut;
 
-        Text = "Allsio Push — Settings";
-        StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(480, 560);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MinimizeBox = false;
-        MaximizeBox = false;
-        BackColor = BgColor;
-        ForeColor = TextPrimary;
-        Font = new Font("Segoe UI", 9f);
+        Title = "Allsio Push — Settings";
+        this.SetWindowSize(480, 600);
+        this.CenterOnScreen();
+        WindowIcon.Apply(this);
+        SystemBackdrop = new MicaBackdrop();
 
-        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = BgColor };
-        var content = new FlowLayoutPanel
+        var content = new StackPanel { Spacing = 0, Padding = new Thickness(24, 20, 24, 20) };
+        content.Children.Add(BuildAccountSection());
+        content.Children.Add(Divider());
+        content.Children.Add(BuildConnectionSection());
+        content.Children.Add(Divider());
+        content.Children.Add(BuildNotificationsSection());
+        content.Children.Add(Divider());
+        content.Children.Add(BuildStartupSection());
+        content.Children.Add(Divider());
+        content.Children.Add(BuildAppSection());
+
+        var scroll = new ScrollViewer
         {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            Padding = new Padding(20, 16, 20, 16),
-            BackColor = BgColor,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = content,
         };
 
-        content.Controls.Add(BuildAccountSection());
-        content.Controls.Add(Divider());
-        content.Controls.Add(BuildConnectionSection());
-        content.Controls.Add(Divider());
-        content.Controls.Add(BuildNotificationsSection());
-        content.Controls.Add(Divider());
-        content.Controls.Add(BuildStartupSection());
-        content.Controls.Add(Divider());
-        content.Controls.Add(BuildAppSection());
-
-        scroll.Controls.Add(content);
-        Controls.Add(scroll);
+        var root = new Grid { RequestedTheme = ElementTheme.Dark };
+        root.Children.Add(scroll);
+        Content = root;
     }
 
-    private Control BuildAccountSection()
+    private FrameworkElement BuildAccountSection()
     {
         var section = NewSection("ACCOUNT");
-
-        var name = new Label
+        section.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(_session?.DisplayName) ? "Not signed in" : _session!.DisplayName,
-            ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-            AutoSize = true,
-            Margin = new Padding(0, 8, 0, 2),
-        };
+            FontSize = 18,
+            FontWeight = FontWeights.Bold,
+            Margin = new Thickness(0, 8, 0, 2),
+        });
+        if (!string.IsNullOrWhiteSpace(_session?.Email))
+            section.Children.Add(new TextBlock { Text = _session!.Email, Foreground = TextMuted, FontSize = 12 });
 
-        var email = new Label
+        var isProd = _settings.Environment == ServerEnvironment.Production;
+        section.Children.Add(new Border
         {
-            Text = _session?.Email ?? "",
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 9f),
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 8),
-        };
-
-        var envBadge = new Label
-        {
-            Text = _settings.Environment == ServerEnvironment.Production ? "Production" : "Development",
-            ForeColor = Color.White,
-            BackColor = _settings.Environment == ServerEnvironment.Production
-                ? Color.FromArgb(34, 197, 94)
-                : AmberColor,
-            Font = new Font("Segoe UI", 8f, FontStyle.Bold),
-            AutoSize = false,
-            Width = 90,
-            Height = 20,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Margin = new Padding(0, 0, 0, 10),
-        };
+            Background = isProd ? GreenColor : AmberColor,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 3, 8, 3),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 8, 0, 10),
+            Child = new TextBlock
+            {
+                Text = isProd ? "Production" : "Development",
+                Foreground = new SolidColorBrush(Colors.White),
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+            },
+        });
 
         var signOut = new Button
         {
-            Text = "Sign Out",
-            Width = 100,
-            Height = 30,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = BgColor,
-            ForeColor = DangerColor,
-            Margin = new Padding(0, 4, 0, 0),
+            Content = "Sign Out",
+            Foreground = DangerColor,
+            BorderBrush = DangerColor,
+            BorderThickness = new Thickness(1),
         };
-        signOut.FlatAppearance.BorderColor = DangerColor;
         signOut.Click += (_, _) =>
         {
             Close();
             _onSignOut();
         };
-
-        section.Controls.Add(name);
-        section.Controls.Add(email);
-        section.Controls.Add(envBadge);
-        section.Controls.Add(signOut);
+        section.Children.Add(signOut);
         return section;
     }
 
-    private Control BuildConnectionSection()
+    private FrameworkElement BuildConnectionSection()
     {
         var section = NewSection("CONNECTION");
+        section.Children.Add(new TextBlock { Text = "Server Environment", Margin = new Thickness(0, 8, 0, 6) });
 
-        var label = new Label
-        {
-            Text = "Server Environment",
-            ForeColor = TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 8, 0, 6),
-        };
+        var prodRadio = new RadioButton { Content = "Production", GroupName = "env", IsChecked = _settings.Environment == ServerEnvironment.Production };
+        var devRadio = new RadioButton { Content = "Development", GroupName = "env", IsChecked = _settings.Environment == ServerEnvironment.Development };
+        var segPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        segPanel.Children.Add(prodRadio);
+        segPanel.Children.Add(devRadio);
+        section.Children.Add(segPanel);
 
-        var segPanel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 8),
-            WrapContents = false,
-        };
-        _prodButton = SegmentButton("Production");
-        _devButton = SegmentButton("Development");
-        segPanel.Controls.Add(_prodButton);
-        segPanel.Controls.Add(_devButton);
-
-        _envWarning = new Label
+        _envWarning = new TextBlock
         {
             Text = "Development server — for testing only",
-            ForeColor = AmberColor,
-            Font = new Font("Segoe UI", 8.5f),
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 4),
-            Visible = _settings.Environment == ServerEnvironment.Development,
+            Foreground = AmberColor,
+            FontSize = 12,
+            Margin = new Thickness(0, 6, 0, 0),
+            Visibility = _settings.Environment == ServerEnvironment.Development ? Visibility.Visible : Visibility.Collapsed,
         };
-        _envRestartNotice = new Label
+        _envRestartNotice = new TextBlock
         {
             Text = "Server change will take effect after signing out and back in.",
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Italic),
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 0),
-            Visible = false,
+            Foreground = TextMuted,
+            FontStyle = global::Windows.UI.Text.FontStyle.Italic,
+            FontSize = 12,
+            Margin = new Thickness(0, 4, 0, 0),
+            Visibility = Visibility.Collapsed,
         };
+        section.Children.Add(_envWarning);
+        section.Children.Add(_envRestartNotice);
 
-        UpdateEnvSegment();
-
-        _prodButton.Click += (_, _) => SetEnvironment(ServerEnvironment.Production);
-        _devButton.Click += (_, _) => SetEnvironment(ServerEnvironment.Development);
-
-        section.Controls.Add(label);
-        section.Controls.Add(segPanel);
-        section.Controls.Add(_envWarning);
-        section.Controls.Add(_envRestartNotice);
+        prodRadio.Checked += (_, _) => SetEnvironment(ServerEnvironment.Production);
+        devRadio.Checked += (_, _) => SetEnvironment(ServerEnvironment.Development);
         return section;
     }
 
-    private Control BuildNotificationsSection()
+    private FrameworkElement BuildNotificationsSection()
     {
         var section = NewSection("NOTIFICATIONS");
 
-        var soundLabel = new Label
+        var soundToggle = new ToggleSwitch
         {
-            Text = "Sound",
-            ForeColor = TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 8, 0, 4),
+            Header = "Sound",
+            IsOn = _settings.SoundEnabled,
+            Margin = new Thickness(0, 8, 0, 4),
         };
-        var soundToggle = ToggleSwitch(_settings.SoundEnabled, v =>
+        soundToggle.Toggled += (_, _) =>
         {
-            _settings.SoundEnabled = v;
+            _settings.SoundEnabled = soundToggle.IsOn;
             SettingsManager.Save(_settings);
-        });
-
-        var displayLabel = new Label
-        {
-            Text = "Display mode",
-            ForeColor = TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 12, 0, 4),
         };
-        var displayPanel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 4),
-            WrapContents = false,
-        };
-        _showImmediateButton = SegmentButton("Show immediately");
-        _deferToastButton = SegmentButton("Defer to toast");
-        displayPanel.Controls.Add(_showImmediateButton);
-        displayPanel.Controls.Add(_deferToastButton);
+        section.Children.Add(soundToggle);
 
-        _displayModeDesc = new Label
-        {
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 8.5f),
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 4),
-        };
+        section.Children.Add(new TextBlock { Text = "Display mode", Margin = new Thickness(0, 12, 0, 6) });
+        var immediateRadio = new RadioButton { Content = "Show immediately", GroupName = "display", IsChecked = !_settings.DeferToToast };
+        var deferRadio = new RadioButton { Content = "Defer to toast", GroupName = "display", IsChecked = _settings.DeferToToast };
+        var displayPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        displayPanel.Children.Add(immediateRadio);
+        displayPanel.Children.Add(deferRadio);
+        section.Children.Add(displayPanel);
 
-        UpdateDisplayModeSegment();
+        _displayModeDesc = new TextBlock { Foreground = TextMuted, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
+        section.Children.Add(_displayModeDesc);
+        UpdateDisplayModeDesc();
 
-        _showImmediateButton.Click += (_, _) => SetDisplayMode(deferToToast: false);
-        _deferToastButton.Click += (_, _) => SetDisplayMode(deferToToast: true);
-
-        section.Controls.Add(soundLabel);
-        section.Controls.Add(soundToggle);
-        section.Controls.Add(displayLabel);
-        section.Controls.Add(displayPanel);
-        section.Controls.Add(_displayModeDesc);
+        immediateRadio.Checked += (_, _) => SetDisplayMode(false);
+        deferRadio.Checked += (_, _) => SetDisplayMode(true);
         return section;
     }
 
-    private Control BuildStartupSection()
+    private FrameworkElement BuildStartupSection()
     {
         var section = NewSection("STARTUP");
-
-        var label = new Label
+        var toggle = new ToggleSwitch
         {
-            Text = "Launch on Windows startup",
-            ForeColor = TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 8, 0, 4),
+            Header = "Launch on Windows startup",
+            IsOn = _settings.LaunchOnStartup,
+            Margin = new Thickness(0, 8, 0, 4),
         };
-        var toggle = ToggleSwitch(_settings.LaunchOnStartup, v =>
+        toggle.Toggled += (_, _) =>
         {
-            _settings.LaunchOnStartup = v;
+            _settings.LaunchOnStartup = toggle.IsOn;
             SettingsManager.Save(_settings);
-            SettingsManager.SetLaunchOnStartup(v);
-        });
-
-        section.Controls.Add(label);
-        section.Controls.Add(toggle);
+            SettingsManager.SetLaunchOnStartup(toggle.IsOn);
+        };
+        section.Children.Add(toggle);
         return section;
     }
 
-    private Control BuildAppSection()
+    private FrameworkElement BuildAppSection()
     {
         var section = NewSection("APP");
 
-        var versionRow = new TableLayoutPanel
-        {
-            ColumnCount = 2,
-            AutoSize = true,
-            ColumnStyles =
-            {
-                new ColumnStyle(SizeType.Absolute, 120),
-                new ColumnStyle(SizeType.AutoSize),
-            },
-            BackColor = BgColor,
-            Margin = new Padding(0, 8, 0, 4),
-        };
-        versionRow.Controls.Add(new Label
-        {
-            Text = "Version",
-            ForeColor = TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 4, 0, 0),
-        });
-        versionRow.Controls.Add(new Label
-        {
-            Text = AppVersionString(),
-            ForeColor = TextMuted,
-            AutoSize = true,
-            Margin = new Padding(0, 4, 0, 0),
-        });
+        var versionRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Margin = new Thickness(0, 8, 0, 4) };
+        versionRow.Children.Add(new TextBlock { Text = "Version", Width = 110 });
+        versionRow.Children.Add(new TextBlock { Text = AppVersionString(), Foreground = TextMuted });
+        section.Children.Add(versionRow);
 
-        var folderLabel = new Label
-        {
-            Text = "App data folder",
-            ForeColor = TextPrimary,
-            AutoSize = true,
-            Margin = new Padding(0, 8, 0, 2),
-        };
-        var folderPath = new Label
+        section.Children.Add(new TextBlock { Text = "App data folder", Margin = new Thickness(0, 8, 0, 2) });
+        section.Children.Add(new TextBlock
         {
             Text = SettingsManager.GetAppDataPath(),
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 8f),
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 6),
-        };
-        var openFolder = new Button
-        {
-            Text = "Open app data folder",
-            Width = 180,
-            Height = 28,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(50, 50, 50),
-            ForeColor = TextPrimary,
-            Margin = new Padding(0, 4, 0, 4),
-        };
-        openFolder.FlatAppearance.BorderColor = BorderColor;
-        openFolder.Click += (_, _) => OpenAppDataFolder();
+            Foreground = TextMuted,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6),
+        });
 
-        section.Controls.Add(versionRow);
-        section.Controls.Add(folderLabel);
-        section.Controls.Add(folderPath);
-        section.Controls.Add(openFolder);
+        var openFolder = new Button { Content = "Open app data folder", Margin = new Thickness(0, 4, 0, 4) };
+        openFolder.Click += (_, _) => OpenAppDataFolder();
+        section.Children.Add(openFolder);
         return section;
     }
 
@@ -355,86 +244,40 @@ public class SettingsWindow : Form
         }
     }
 
-    private FlowLayoutPanel NewSection(string title)
+    private static StackPanel NewSection(string title)
     {
-        var section = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            AutoSize = true,
-            WrapContents = false,
-            BackColor = BgColor,
-            Margin = new Padding(0, 4, 0, 4),
-            Width = ClientSize.Width - 40,
-        };
-        var header = new Label
+        var section = new StackPanel { Spacing = 0, Margin = new Thickness(0, 4, 0, 4) };
+        section.Children.Add(new TextBlock
         {
             Text = title,
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 8f, FontStyle.Bold),
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 4),
-        };
-        section.Controls.Add(header);
+            Foreground = TextMuted,
+            FontSize = 12,
+            FontWeight = FontWeights.Bold,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
         return section;
     }
 
-    private static Panel Divider()
+    private static Border Divider() => new()
     {
-        var d = new Panel
-        {
-            Height = 1,
-            BackColor = BorderColor,
-            Width = 420,
-            Margin = new Padding(0, 12, 0, 12),
-        };
-        return d;
-    }
-
-    private static Button SegmentButton(string text)
-    {
-        var b = new Button
-        {
-            Text = text,
-            Width = 140,
-            Height = 30,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = SegmentUnselectedBg,
-            ForeColor = TextPrimary,
-            Margin = new Padding(0, 0, 0, 0),
-        };
-        b.FlatAppearance.BorderColor = BorderColor;
-        return b;
-    }
-
-    private void UpdateEnvSegment()
-    {
-        if (_prodButton == null || _devButton == null) return;
-        var prod = _settings.Environment == ServerEnvironment.Production;
-        _prodButton.BackColor = prod ? SegmentSelectedBg : SegmentUnselectedBg;
-        _devButton.BackColor = prod ? SegmentUnselectedBg : SegmentSelectedBg;
-        _prodButton.FlatAppearance.BorderColor = prod ? AccentColor : BorderColor;
-        _devButton.FlatAppearance.BorderColor = prod ? BorderColor : AmberColor;
-    }
+        Height = 1,
+        Background = new SolidColorBrush(ColorHelper.FromArgb(255, 55, 55, 55)),
+        Margin = new Thickness(0, 12, 0, 12),
+    };
 
     private void SetEnvironment(ServerEnvironment env)
     {
         if (_settings.Environment == env) return;
         _settings.Environment = env;
         SettingsManager.Save(_settings);
-        UpdateEnvSegment();
-        if (_envWarning != null) _envWarning.Visible = env == ServerEnvironment.Development;
-        if (_envRestartNotice != null) _envRestartNotice.Visible = true;
+        if (_envWarning != null) _envWarning.Visibility = env == ServerEnvironment.Development ? Visibility.Visible : Visibility.Collapsed;
+        if (_envRestartNotice != null) _envRestartNotice.Visibility = Visibility.Visible;
     }
 
-    private void UpdateDisplayModeSegment()
+    private void UpdateDisplayModeDesc()
     {
-        if (_showImmediateButton == null || _deferToastButton == null || _displayModeDesc == null) return;
-        var defer = _settings.DeferToToast;
-        _showImmediateButton.BackColor = defer ? SegmentUnselectedBg : SegmentSelectedBg;
-        _deferToastButton.BackColor = defer ? SegmentSelectedBg : SegmentUnselectedBg;
-        _showImmediateButton.FlatAppearance.BorderColor = defer ? BorderColor : AccentColor;
-        _deferToastButton.FlatAppearance.BorderColor = defer ? AccentColor : BorderColor;
-        _displayModeDesc.Text = defer
+        if (_displayModeDesc == null) return;
+        _displayModeDesc.Text = _settings.DeferToToast
             ? "Defer to toast: Toast appears first — click to open full notification."
             : "Show immediately: Notification windows open automatically.";
     }
@@ -444,40 +287,6 @@ public class SettingsWindow : Form
         if (_settings.DeferToToast == deferToToast) return;
         _settings.DeferToToast = deferToToast;
         SettingsManager.Save(_settings);
-        UpdateDisplayModeSegment();
-    }
-
-    private Control ToggleSwitch(bool initial, Action<bool> onChange)
-    {
-        var cb = new CheckBox
-        {
-            Appearance = Appearance.Button,
-            Checked = initial,
-            TextAlign = ContentAlignment.MiddleCenter,
-            FlatStyle = FlatStyle.Flat,
-            Width = 70,
-            Height = 28,
-            AutoSize = false,
-            Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-            Margin = new Padding(0, 0, 0, 4),
-        };
-        cb.FlatAppearance.BorderColor = BorderColor;
-        void Apply()
-        {
-            cb.Text = cb.Checked ? "ON" : "OFF";
-            cb.BackColor = cb.Checked ? AccentColor : Color.FromArgb(40, 40, 40);
-            cb.ForeColor = cb.Checked ? Color.White : TextMuted;
-        }
-        Apply();
-        cb.CheckedChanged += (_, _) =>
-        {
-            Apply();
-            try { onChange(cb.Checked); }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[Settings] toggle handler threw: {ex.Message}");
-            }
-        };
-        return cb;
+        UpdateDisplayModeDesc();
     }
 }

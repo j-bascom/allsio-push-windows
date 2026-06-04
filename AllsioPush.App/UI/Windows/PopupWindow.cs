@@ -2,19 +2,24 @@ using System.Text;
 using AllsioPush.Config;
 using AllsioPush.Models;
 using AllsioPush.Services;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
+using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
 
-public class PopupWindow : Form, IRemoteAckTarget
+public class PopupWindow : WindowEx, IRemoteAckTarget
 {
+    private static readonly SolidColorBrush GreenBrush = new(Microsoft.UI.ColorHelper.FromArgb(255, 34, 197, 94));
+
     private readonly PushNotification _notification;
     private readonly AckService _ackService;
     private readonly WindowTracker _tracker;
     private readonly WebView2 _webView;
-    private readonly FlowLayoutPanel _actionsPanel;
-    private readonly Label _loadingLabel;
+    private readonly StackPanel _actionsPanel;
+    private readonly TextBlock _loadingLabel;
     private Button? _ackButton;
 
     public string? NotificationId => _notification.NotificationId;
@@ -28,59 +33,56 @@ public class PopupWindow : Form, IRemoteAckTarget
         var width = Math.Max(320, notification.PopupWidth ?? 600);
         var height = Math.Max(240, notification.PopupHeight ?? 480);
 
-        Text = string.IsNullOrWhiteSpace(notification.Title) ? "Allsio Push" : notification.Title;
-        StartPosition = FormStartPosition.Manual;
-        ClientSize = new Size(width, height);
-        var cursorPos = Cursor.Position;
-        var screen = (Screen.FromPoint(cursorPos) ?? Screen.PrimaryScreen!).WorkingArea;
-        Location = new Point(
-            screen.X + (screen.Width - Width) / 2,
-            screen.Y + (screen.Height - Height) / 2);
-        TopMost = true;
-        MinimizeBox = false;
-        MaximizeBox = false;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        Title = string.IsNullOrWhiteSpace(notification.Title) ? "Allsio Push" : notification.Title;
+        this.SetWindowSize(width, height);
+        this.CenterOnScreen();
+        WindowIcon.Apply(this);
+        IsAlwaysOnTop = true;
+        SystemBackdrop = new MicaBackdrop();
 
-        _loadingLabel = new Label
+        _loadingLabel = new TextBlock
         {
             Text = "Loading…",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = Color.Gray,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
         };
+        _webView = new WebView2 { Visibility = Visibility.Collapsed };
 
-        _actionsPanel = new FlowLayoutPanel
+        _actionsPanel = new StackPanel
         {
-            Dock = DockStyle.Bottom,
-            Height = 48,
-            FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(8),
-            BackColor = SystemColors.Control,
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Padding = new Thickness(12),
         };
 
-        _webView = new WebView2 { Dock = DockStyle.Fill, Visible = false };
-
-        Controls.Add(_webView);
-        Controls.Add(_actionsPanel);
-        Controls.Add(_loadingLabel);
+        var root = new Grid { RequestedTheme = ElementTheme.Dark };
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(_webView, 0);
+        Grid.SetRow(_loadingLabel, 0);
+        Grid.SetRow(_actionsPanel, 1);
+        root.Children.Add(_webView);
+        root.Children.Add(_loadingLabel);
+        root.Children.Add(_actionsPanel);
+        Content = root;
 
         BuildActionButtons();
 
-        Load += async (_, _) =>
+        root.Loaded += async (_, _) =>
         {
             _tracker.Register(this);
             await InitializeWebViewAsync();
         };
-        FormClosed += (_, _) => _tracker.Unregister(this);
+        Closed += (_, _) => _tracker.Unregister(this);
 
         if ((notification.Ttl ?? 0) > 0)
         {
-            var timer = new System.Windows.Forms.Timer { Interval = notification.Ttl!.Value * 1000 };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                if (!IsDisposed) Close();
-            };
+            var timer = DispatcherQueue.CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(notification.Ttl!.Value);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) => Close();
             timer.Start();
         }
     }
@@ -91,38 +93,29 @@ public class PopupWindow : Form, IRemoteAckTarget
         {
             var userDataFolder = Path.Combine(SettingsManager.GetAppDataPath(), "WebView2");
             Directory.CreateDirectory(userDataFolder);
-            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+            var env = await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, userDataFolder, new CoreWebView2EnvironmentOptions());
             await _webView.EnsureCoreWebView2Async(env);
 
             _webView.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
 
-            _loadingLabel.Visible = false;
-            _webView.Visible = true;
+            _loadingLabel.Visibility = Visibility.Collapsed;
+            _webView.Visibility = Visibility.Visible;
 
             if (_notification.TemplateType == "url_popup" && !string.IsNullOrWhiteSpace(_notification.Url))
-            {
                 _webView.CoreWebView2.Navigate(_notification.Url);
-            }
             else if (_notification.TemplateType == "custom_html")
-            {
-                var html = RenderCustomHtml();
-                _webView.CoreWebView2.NavigateToString(html);
-            }
+                _webView.CoreWebView2.NavigateToString(RenderCustomHtml());
             else if (!string.IsNullOrWhiteSpace(_notification.Url))
-            {
                 _webView.CoreWebView2.Navigate(_notification.Url);
-            }
             else
-            {
                 _webView.CoreWebView2.NavigateToString(PlainContentHtml());
-            }
         }
         catch (Exception ex)
         {
-            _loadingLabel.Text =
-                "Could not load content.\nWebView2 runtime may be missing.\n" + ex.Message;
-            _loadingLabel.Visible = true;
+            _loadingLabel.Text = "Could not load content.\nWebView2 runtime may be missing.\n" + ex.Message;
+            _loadingLabel.Visibility = Visibility.Visible;
         }
     }
 
@@ -160,12 +153,9 @@ public class PopupWindow : Form, IRemoteAckTarget
             ["senderPhone"] = _notification.SenderPhone,
             ["url"] = _notification.Url,
         };
-
         var sb = new StringBuilder(template);
         foreach (var kv in tokens)
-        {
             sb.Replace("{{" + kv.Key + "}}", HtmlEscape(kv.Value ?? string.Empty));
-        }
         return sb.ToString();
     }
 
@@ -187,10 +177,7 @@ public class PopupWindow : Form, IRemoteAckTarget
     }
 
     private static string HtmlEscape(string input) =>
-        input.Replace("&", "&amp;")
-             .Replace("<", "&lt;")
-             .Replace(">", "&gt;")
-             .Replace("\"", "&quot;");
+        input.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
     private void BuildActionButtons()
     {
@@ -198,98 +185,84 @@ public class PopupWindow : Form, IRemoteAckTarget
         foreach (var btn in _notification.Buttons)
         {
             var label = string.IsNullOrWhiteSpace(btn.Label) ? "Button" : btn.Label;
-            var button = new Button { Text = label, AutoSize = true, Margin = new Padding(4, 4, 0, 4) };
+            var button = new Button { Content = label };
             switch (btn.Action)
             {
                 case "ack":
                     button.Click += async (_, _) =>
                     {
-                        button.Enabled = false;
+                        button.IsEnabled = false;
                         await _ackService.Acknowledge(_notification.NotificationId, label, "ack");
-                        button.ForeColor = Color.FromArgb(34, 197, 94);
+                        button.Foreground = GreenBrush;
                         await Task.Delay(1200);
-                        if (!IsDisposed) Close();
+                        Close();
                     };
                     _ackButton ??= button;
                     break;
                 case "dismiss":
                     button.Click += async (_, _) =>
                     {
-                        button.Enabled = false;
+                        button.IsEnabled = false;
                         await _ackService.Dismiss(_notification.NotificationId, label);
-                        if (!IsDisposed) Close();
+                        Close();
                     };
                     break;
                 case "webhook":
+                {
+                    var captured = btn;
+                    button.Click += async (_, _) =>
                     {
-                        var captured = btn;
-                        button.Click += async (_, _) =>
-                        {
-                            button.Enabled = false;
-                            if (!string.IsNullOrWhiteSpace(captured.WebhookUrl))
-                                await _ackService.FireWebhook(captured.WebhookUrl!, _notification, label);
-                            button.ForeColor = Color.FromArgb(34, 197, 94);
-                            await Task.Delay(1200);
-                            if (!IsDisposed) Close();
-                        };
-                        break;
-                    }
+                        button.IsEnabled = false;
+                        if (!string.IsNullOrWhiteSpace(captured.WebhookUrl))
+                            await _ackService.FireWebhook(captured.WebhookUrl!, _notification, label);
+                        button.Foreground = GreenBrush;
+                        await Task.Delay(1200);
+                        Close();
+                    };
+                    break;
+                }
                 default:
                     button.Click += async (_, _) =>
                     {
-                        button.Enabled = false;
+                        button.IsEnabled = false;
                         await _ackService.Acknowledge(_notification.NotificationId, label, btn.Action ?? "noop");
                         await Task.Delay(1200);
-                        if (!IsDisposed) Close();
+                        Close();
                     };
                     break;
             }
-            _actionsPanel.Controls.Add(button);
+            _actionsPanel.Children.Add(button);
             any = true;
         }
 
         if (!any && !string.IsNullOrWhiteSpace(_notification.NotificationId))
         {
-            var ack = new Button { Text = "Acknowledge", AutoSize = true, Margin = new Padding(4, 4, 0, 4) };
+            var ack = new Button { Content = "Acknowledge" };
             ack.Click += async (_, _) =>
             {
-                ack.Enabled = false;
+                ack.IsEnabled = false;
                 await _ackService.Acknowledge(_notification.NotificationId, "Acknowledge", "ack");
-                ack.ForeColor = Color.FromArgb(34, 197, 94);
+                ack.Foreground = GreenBrush;
                 await Task.Delay(1200);
-                if (!IsDisposed) Close();
+                Close();
             };
-            _actionsPanel.Controls.Add(ack);
+            _actionsPanel.Children.Add(ack);
             _ackButton = ack;
         }
     }
 
     public void RemoteAcknowledged(string acknowledgedBy)
     {
-        void Apply()
+        DispatcherQueue.TryEnqueue(async () =>
         {
             if (_ackButton != null)
             {
-                _ackButton.Enabled = false;
+                _ackButton.IsEnabled = false;
                 var who = string.IsNullOrWhiteSpace(acknowledgedBy) ? "someone" : acknowledgedBy;
-                _ackButton.Text = $"Acked by {who}";
+                _ackButton.Content = $"Acked by {who}";
             }
-            var timer = new System.Windows.Forms.Timer { Interval = 2000 };
-            timer.Tick += (_, _) =>
-            {
-                timer.Stop();
-                if (!IsDisposed) Close();
-            };
-            timer.Start();
-        }
-
-        if (InvokeRequired) BeginInvoke((Action)Apply);
-        else Apply();
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing) _webView?.Dispose();
-        base.Dispose(disposing);
+            await Task.Delay(2000);
+            Close();
+        });
     }
 }

@@ -2,17 +2,25 @@ using System.Text.Json;
 using AllsioPush.Config;
 using AllsioPush.Models;
 using AllsioPush.Services;
+using Microsoft.UI;
+using Microsoft.UI.Text;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
 
-public class HistoryWindow : Form
+public class HistoryWindow : WindowEx
 {
-    private static readonly Color BgColor = Color.FromArgb(24, 24, 24);
-    private static readonly Color SurfaceColor = Color.FromArgb(36, 36, 36);
-    private static readonly Color BorderColor = Color.FromArgb(55, 55, 55);
-    private static readonly Color TextPrimary = Color.FromArgb(240, 240, 240);
-    private static readonly Color TextMuted = Color.FromArgb(140, 140, 140);
-    private static readonly Color AccentColor = Color.FromArgb(59, 130, 246);
+    private static readonly SolidColorBrush SurfaceColor = new(ColorHelper.FromArgb(255, 36, 36, 36));
+    private static readonly SolidColorBrush SurfaceHover = new(ColorHelper.FromArgb(255, 46, 46, 46));
+    private static readonly SolidColorBrush BorderColorBrush = new(ColorHelper.FromArgb(255, 55, 55, 55));
+    private static readonly SolidColorBrush TextPrimary = new(ColorHelper.FromArgb(255, 240, 240, 240));
+    private static readonly SolidColorBrush TextMuted = new(ColorHelper.FromArgb(255, 140, 140, 140));
+    private static readonly SolidColorBrush AccentColor = new(ColorHelper.FromArgb(255, 59, 130, 246));
+    private static readonly SolidColorBrush GreenColor = new(ColorHelper.FromArgb(255, 34, 197, 94));
 
     private readonly HistoryService _history;
     private readonly NotificationRouter _router;
@@ -21,12 +29,9 @@ public class HistoryWindow : Form
     private readonly SynchronizationContext _uiContext;
 
     private readonly ComboBox _filterCombo;
-    private readonly Button _refreshButton;
-    private readonly Button _clearButton;
     private readonly Button _loadServerButton;
-    private readonly Label _countLabel;
-    private readonly FlowLayoutPanel _cardList;
-    private readonly Panel _scrollContainer;
+    private readonly TextBlock _countLabel;
+    private readonly StackPanel _cardList;
 
     private readonly List<HistoryEntry> _entries = new();
     private readonly Dictionary<string, EntryCard> _cardsById = new();
@@ -45,167 +50,104 @@ public class HistoryWindow : Form
         _sessionGetter = sessionGetter;
         _uiContext = uiContext;
 
-        Text = "Allsio Push — Notification History";
-        StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(680, 720);
-        MinimumSize = new Size(500, 400);
-        BackColor = BgColor;
-        ForeColor = TextPrimary;
-        Font = new Font("Segoe UI", 9f);
+        Title = "Allsio Push — Notification History";
+        this.SetWindowSize(680, 720);
+        this.CenterOnScreen();
+        WindowIcon.Apply(this);
+        SystemBackdrop = new MicaBackdrop();
 
-        var header = BuildHeader(out _filterCombo, out _refreshButton, out _clearButton);
-        var footer = BuildFooter(out _countLabel, out _loadServerButton);
-
-        _cardList = new FlowLayoutPanel
+        _filterCombo = new ComboBox
         {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = false,
-            AutoScroll = false,
-            Dock = DockStyle.Top,
-            Padding = new Padding(12),
-            BackColor = BgColor,
+            Width = 150,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        foreach (var f in new[] { "All Types", "Plain Text", "Caller Card", "Appointment", "URL", "Custom HTML", "SMS" })
+            _filterCombo.Items.Add(f);
+        _filterCombo.SelectedIndex = 0;
+
+        var refreshButton = new Button { Content = "Refresh" };
+        var clearButton = new Button { Content = "Clear" };
+        _loadServerButton = new Button { Content = "Load from server" };
+        _countLabel = new TextBlock { Text = "0 notifications", Foreground = TextMuted, VerticalAlignment = VerticalAlignment.Center };
+
+        var header = BuildHeader(refreshButton, clearButton);
+        var footer = BuildFooter();
+
+        _cardList = new StackPanel { Spacing = 8, Padding = new Thickness(12) };
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = _cardList,
         };
 
-        _scrollContainer = new Panel
-        {
-            Dock = DockStyle.Fill,
-            AutoScroll = true,
-            BackColor = BgColor,
-        };
-        _scrollContainer.Controls.Add(_cardList);
-        _cardList.Width = _scrollContainer.ClientSize.Width;
-        _scrollContainer.Resize += (_, _) =>
-        {
-            _cardList.Width = _scrollContainer.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 2;
-            foreach (Control c in _cardList.Controls) ResizeCard(c);
-        };
+        var root = new Grid { RequestedTheme = ElementTheme.Dark };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(header, 0);
+        Grid.SetRow(scroll, 1);
+        Grid.SetRow(footer, 2);
+        root.Children.Add(header);
+        root.Children.Add(scroll);
+        root.Children.Add(footer);
+        Content = root;
 
-        Controls.Add(_scrollContainer);
-        Controls.Add(footer);
-        Controls.Add(header);
-
-        _filterCombo.SelectedIndexChanged += OnFilterChanged;
-        _refreshButton.Click += async (_, _) => await ReloadLocalAsync();
-        _clearButton.Click += async (_, _) => await ClearAsync();
+        _filterCombo.SelectionChanged += OnFilterChanged;
+        refreshButton.Click += async (_, _) => await ReloadLocalAsync();
+        clearButton.Click += async (_, _) => await ClearAsync();
         _loadServerButton.Click += async (_, _) => await LoadFromServerAsync();
 
-        Load += async (_, _) => await ReloadLocalAsync();
+        root.Loaded += async (_, _) => await ReloadLocalAsync();
     }
 
-    private Panel BuildHeader(out ComboBox filter, out Button refresh, out Button clear)
+    private FrameworkElement BuildHeader(Button refresh, Button clear)
     {
-        var header = new Panel
+        var grid = new Grid
         {
-            Dock = DockStyle.Top,
-            Height = 48,
-            BackColor = SurfaceColor,
-            Padding = new Padding(12, 8, 12, 8),
+            Background = SurfaceColor,
+            Padding = new Thickness(12, 8, 12, 8),
+            BorderBrush = BorderColorBrush,
+            BorderThickness = new Thickness(0, 0, 0, 1),
         };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var title = new Label
+        var title = new TextBlock
         {
             Text = "Notification History",
-            ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 11f, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(12, 14),
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
         };
+        Grid.SetColumn(title, 0);
 
-        filter = new ComboBox
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            BackColor = BgColor,
-            ForeColor = TextPrimary,
-            FlatStyle = FlatStyle.Flat,
-            Width = 140,
-            Anchor = AnchorStyles.Top | AnchorStyles.Right,
-        };
-        filter.Items.AddRange(new object[]
-        {
-            "All Types", "Plain Text", "Caller Card", "Appointment",
-            "URL", "Custom HTML", "SMS",
-        });
-        filter.SelectedIndex = 0;
+        var rightPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        rightPanel.Children.Add(_filterCombo);
+        rightPanel.Children.Add(refresh);
+        rightPanel.Children.Add(clear);
+        Grid.SetColumn(rightPanel, 1);
 
-        refresh = StyledButton("Refresh", 72);
-        clear = StyledButton("Clear", 60);
-
-        var rightPanel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            Dock = DockStyle.Right,
-            BackColor = SurfaceColor,
-            Padding = new Padding(0, 4, 0, 0),
-            WrapContents = false,
-        };
-        rightPanel.Controls.Add(filter);
-        rightPanel.Controls.Add(refresh);
-        rightPanel.Controls.Add(clear);
-
-        header.Controls.Add(rightPanel);
-        header.Controls.Add(title);
-
-        var border = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = BorderColor };
-        header.Controls.Add(border);
-
-        return header;
+        grid.Children.Add(title);
+        grid.Children.Add(rightPanel);
+        return grid;
     }
 
-    private Panel BuildFooter(out Label countLabel, out Button loadServer)
+    private FrameworkElement BuildFooter()
     {
-        var footer = new Panel
+        var grid = new Grid
         {
-            Dock = DockStyle.Bottom,
-            Height = 36,
-            BackColor = SurfaceColor,
-            Padding = new Padding(12, 6, 12, 6),
+            Background = SurfaceColor,
+            Padding = new Thickness(12, 6, 12, 6),
+            BorderBrush = BorderColorBrush,
+            BorderThickness = new Thickness(0, 1, 0, 0),
         };
-
-        countLabel = new Label
-        {
-            Text = "0 notifications",
-            ForeColor = TextMuted,
-            AutoSize = true,
-            Location = new Point(12, 10),
-        };
-
-        loadServer = StyledButton("Load from server", 130);
-        var rightPanel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            Dock = DockStyle.Right,
-            BackColor = SurfaceColor,
-            Padding = new Padding(0, 2, 0, 0),
-            WrapContents = false,
-        };
-        rightPanel.Controls.Add(loadServer);
-
-        footer.Controls.Add(rightPanel);
-        footer.Controls.Add(countLabel);
-
-        var border = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = BorderColor };
-        footer.Controls.Add(border);
-
-        return footer;
-    }
-
-    private static Button StyledButton(string text, int width)
-    {
-        var b = new Button
-        {
-            Text = text,
-            Width = width,
-            Height = 28,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(50, 50, 50),
-            ForeColor = TextPrimary,
-            Margin = new Padding(6, 2, 0, 2),
-        };
-        b.FlatAppearance.BorderColor = BorderColor;
-        return b;
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(_countLabel, 0);
+        Grid.SetColumn(_loadServerButton, 1);
+        grid.Children.Add(_countLabel);
+        grid.Children.Add(_loadServerButton);
+        return grid;
     }
 
     private async Task ReloadLocalAsync()
@@ -228,14 +170,13 @@ public class HistoryWindow : Form
         var session = _sessionGetter();
         if (session == null || string.IsNullOrWhiteSpace(session.Token))
         {
-            MessageBox.Show(this, "Not signed in. Cannot load server history.", "Allsio Push",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            await ShowMessage("Not signed in. Cannot load server history.");
             return;
         }
 
-        _loadServerButton.Enabled = false;
-        var original = _loadServerButton.Text;
-        _loadServerButton.Text = "Loading…";
+        _loadServerButton.IsEnabled = false;
+        var original = _loadServerButton.Content;
+        _loadServerButton.Content = "Loading…";
         try
         {
             var serverRows = await _history.GetServerHistory(session.Token, _settings.ApiBase, 200);
@@ -257,23 +198,43 @@ public class HistoryWindow : Form
         }
         finally
         {
-            _loadServerButton.Text = original;
-            _loadServerButton.Enabled = true;
+            _loadServerButton.Content = original;
+            _loadServerButton.IsEnabled = true;
         }
     }
 
     private async Task ClearAsync()
     {
-        var confirm = MessageBox.Show(this, "Clear all local history?", "Allsio Push",
-            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
-        if (confirm != DialogResult.Yes) return;
+        var dialog = new ContentDialog
+        {
+            Title = "Allsio Push",
+            Content = "Clear all local history?",
+            PrimaryButtonText = "Clear",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+        };
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
 
         await _history.ClearAll();
         _entries.Clear();
         Render();
     }
 
-    private void OnFilterChanged(object? sender, EventArgs e)
+    private async Task ShowMessage(string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Allsio Push",
+            Content = message,
+            CloseButtonText = "OK",
+            XamlRoot = ((FrameworkElement)Content).XamlRoot,
+        };
+        await dialog.ShowAsync();
+    }
+
+    private void OnFilterChanged(object sender, SelectionChangedEventArgs e)
     {
         _filter = (_filterCombo.SelectedItem as string) ?? "All Types";
         Render();
@@ -281,26 +242,18 @@ public class HistoryWindow : Form
 
     private void Render()
     {
-        _cardList.SuspendLayout();
-        _cardList.Controls.Clear();
+        _cardList.Children.Clear();
         _cardsById.Clear();
 
         var filtered = ApplyFilter(_entries);
         foreach (var entry in filtered)
         {
-            var card = new EntryCard(entry, _cardList.Width - _cardList.Padding.Horizontal, OnCardClicked);
-            _cardList.Controls.Add(card);
+            var card = new EntryCard(entry, OnCardClicked);
+            _cardList.Children.Add(card.Root);
             if (!string.IsNullOrEmpty(entry.NotificationId))
                 _cardsById[entry.NotificationId!] = card;
         }
-        _cardList.ResumeLayout();
-        _cardList.Height = filtered.Sum(_ => 96) + 12;
         _countLabel.Text = $"{filtered.Count} notification{(filtered.Count == 1 ? "" : "s")}";
-    }
-
-    private void ResizeCard(Control c)
-    {
-        c.Width = _cardList.Width - _cardList.Padding.Horizontal;
     }
 
     private List<HistoryEntry> ApplyFilter(List<HistoryEntry> source)
@@ -336,19 +289,17 @@ public class HistoryWindow : Form
 
     public void AddEntry(HistoryEntry entry)
     {
-        void Apply()
+        _uiContext.Post(_ =>
         {
             _entries.Insert(0, entry);
             if (_entries.Count > 500) _entries.RemoveAt(_entries.Count - 1);
             Render();
-        }
-        if (InvokeRequired) BeginInvoke((Action)Apply);
-        else Apply();
+        }, null);
     }
 
     public void UpdateEntryAction(string notificationId, string action, string? by)
     {
-        void Apply()
+        _uiContext.Post(_ =>
         {
             var entry = _entries.FirstOrDefault(e =>
                 string.Equals(e.NotificationId, notificationId, StringComparison.Ordinal));
@@ -361,119 +312,109 @@ public class HistoryWindow : Form
                 entry.IsRemoteAck = true;
             }
             if (_cardsById.TryGetValue(notificationId, out var card))
-            {
                 card.UpdateAction(entry);
-            }
-        }
-        if (InvokeRequired) BeginInvoke((Action)Apply);
-        else Apply();
+        }, null);
     }
 
-    private sealed class EntryCard : Panel
+    private sealed class EntryCard
     {
+        public Border Root { get; }
+
         private readonly HistoryEntry _entry;
-        private readonly Label _actionLabel;
+        private readonly TextBlock _actionLabel;
         private readonly Action<HistoryEntry> _onClick;
 
-        public EntryCard(HistoryEntry entry, int width, Action<HistoryEntry> onClick)
+        public EntryCard(HistoryEntry entry, Action<HistoryEntry> onClick)
         {
             _entry = entry;
             _onClick = onClick;
 
-            Width = width;
-            Height = 90;
-            BackColor = SurfaceColor;
-            Margin = new Padding(0, 0, 0, 8);
-            Padding = new Padding(12, 10, 12, 10);
-            Cursor = Cursors.Hand;
-
-            var badge = new Label
+            Root = new Border
             {
-                Text = BadgeText(entry.TemplateType),
-                BackColor = BadgeColor(entry.TemplateType),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
-                AutoSize = false,
-                Width = 86,
-                Height = 18,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(12, 12),
+                Background = SurfaceColor,
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(12, 10, 12, 10),
             };
 
-            var title = new Label
+            var stack = new StackPanel { Spacing = 4 };
+
+            var topRow = new Grid();
+            topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            topRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var badge = new Border
+            {
+                Background = BadgeColor(entry.TemplateType),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(6, 2, 6, 2),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = BadgeText(entry.TemplateType),
+                    Foreground = new SolidColorBrush(Colors.White),
+                    FontSize = 10,
+                    FontWeight = FontWeights.Bold,
+                },
+            };
+            Grid.SetColumn(badge, 0);
+
+            var title = new TextBlock
             {
                 Text = string.IsNullOrWhiteSpace(entry.Title) ? "(no title)" : entry.Title,
-                ForeColor = TextPrimary,
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-                AutoSize = false,
-                Location = new Point(108, 11),
-                Width = width - 108 - 90,
-                Height = 20,
-                AutoEllipsis = true,
+                Foreground = TextPrimary,
+                FontSize = 13,
+                FontWeight = FontWeights.Bold,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 10, 0),
             };
+            Grid.SetColumn(title, 1);
 
-            var time = new Label
+            var time = new TextBlock
             {
                 Text = FormatTime(entry.ReceivedAt),
-                ForeColor = TextMuted,
-                Font = new Font("Segoe UI", 8.5f),
-                AutoSize = false,
-                TextAlign = ContentAlignment.MiddleRight,
-                Location = new Point(width - 90, 12),
-                Width = 78,
-                Height = 18,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Foreground = TextMuted,
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
             };
+            Grid.SetColumn(time, 2);
 
-            var content = new Label
+            topRow.Children.Add(badge);
+            topRow.Children.Add(title);
+            topRow.Children.Add(time);
+            stack.Children.Add(topRow);
+
+            stack.Children.Add(new TextBlock
             {
                 Text = TruncateContent(entry.Content),
-                ForeColor = TextMuted,
-                Font = new Font("Segoe UI", 9f),
-                AutoSize = false,
-                Location = new Point(12, 36),
-                Width = width - 24,
-                Height = 32,
-                AutoEllipsis = true,
-            };
+                Foreground = TextMuted,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 2,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
 
-            _actionLabel = new Label
+            _actionLabel = new TextBlock
             {
                 Text = FormatAction(entry),
-                ForeColor = ActionColor(entry.ActionTaken),
-                Font = new Font("Segoe UI", 8.5f),
-                AutoSize = false,
-                Location = new Point(12, 68),
-                Width = width - 24,
-                Height = 16,
+                Foreground = ActionColor(entry.ActionTaken),
+                FontSize = 11,
             };
+            stack.Children.Add(_actionLabel);
 
-            Controls.Add(badge);
-            Controls.Add(title);
-            Controls.Add(time);
-            Controls.Add(content);
-            Controls.Add(_actionLabel);
+            Root.Child = stack;
 
-            Click += OnClickSelf;
-            badge.Click += OnClickSelf;
-            title.Click += OnClickSelf;
-            time.Click += OnClickSelf;
-            content.Click += OnClickSelf;
-            _actionLabel.Click += OnClickSelf;
-
-            MouseEnter += OnHover;
-            MouseLeave += OnUnhover;
+            Root.PointerEntered += (_, _) => Root.Background = SurfaceHover;
+            Root.PointerExited += (_, _) => Root.Background = SurfaceColor;
+            Root.PointerPressed += (_, _) => _onClick(_entry);
         }
 
         public void UpdateAction(HistoryEntry entry)
         {
             _actionLabel.Text = FormatAction(entry);
-            _actionLabel.ForeColor = ActionColor(entry.ActionTaken);
+            _actionLabel.Foreground = ActionColor(entry.ActionTaken);
         }
-
-        private void OnClickSelf(object? s, EventArgs e) => _onClick(_entry);
-        private void OnHover(object? s, EventArgs e) => BackColor = Color.FromArgb(46, 46, 46);
-        private void OnUnhover(object? s, EventArgs e) => BackColor = SurfaceColor;
 
         private static string BadgeText(string t) => t switch
         {
@@ -486,14 +427,14 @@ public class HistoryWindow : Form
             _ => "PLAIN",
         };
 
-        private static Color BadgeColor(string t) => t switch
+        private static SolidColorBrush BadgeColor(string t) => t switch
         {
-            "caller_card" => Color.FromArgb(59, 130, 246),
-            "appointment_alert" => Color.FromArgb(217, 119, 6),
-            "url_tab" or "url_popup" => Color.FromArgb(139, 92, 246),
-            "custom_html" => Color.FromArgb(20, 184, 166),
-            "sms" => Color.FromArgb(34, 197, 94),
-            _ => Color.FromArgb(107, 114, 128),
+            "caller_card" => new SolidColorBrush(ColorHelper.FromArgb(255, 59, 130, 246)),
+            "appointment_alert" => new SolidColorBrush(ColorHelper.FromArgb(255, 217, 119, 6)),
+            "url_tab" or "url_popup" => new SolidColorBrush(ColorHelper.FromArgb(255, 139, 92, 246)),
+            "custom_html" => new SolidColorBrush(ColorHelper.FromArgb(255, 20, 184, 166)),
+            "sms" => new SolidColorBrush(ColorHelper.FromArgb(255, 34, 197, 94)),
+            _ => new SolidColorBrush(ColorHelper.FromArgb(255, 107, 114, 128)),
         };
 
         private static string FormatTime(DateTime received)
@@ -530,12 +471,10 @@ public class HistoryWindow : Form
             };
         }
 
-        private static Color ActionColor(string? action) => action switch
+        private static SolidColorBrush ActionColor(string? action) => action switch
         {
-            "ack" or "acknowledge" or "acknowledged" => Color.FromArgb(34, 197, 94),
-            "dismiss" or "dismissed" => TextMuted,
+            "ack" or "acknowledge" or "acknowledged" => GreenColor,
             "webhook" => AccentColor,
-            "timed_out" => TextMuted,
             _ => TextMuted,
         };
 

@@ -1,20 +1,24 @@
 using AllsioPush.Config;
 using AllsioPush.Models;
 using AllsioPush.Services;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
+using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
 
-public class LoginWindow : Form
+public class LoginWindow : WindowEx
 {
     private readonly AppSettings _settings;
     private readonly AuthService _authService;
     private readonly WebView2 _webView;
-    private readonly Label _loadingLabel;
-    private readonly Label _errorLabel;
-    private readonly Button _retryButton;
-    private bool _exchanging = false;
+    private readonly StackPanel _statusPanel;
+    private readonly TextBlock _statusText;
+    private readonly StackPanel _errorPanel;
+    private readonly TextBlock _errorText;
+    private bool _exchanging;
 
     public event Action<AuthSession>? OnLoginSuccess;
 
@@ -23,50 +27,56 @@ public class LoginWindow : Form
         _settings = settings;
         _authService = authService;
 
-        Text = "Allsio Push — Sign In";
-        StartPosition = FormStartPosition.CenterScreen;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
-        MinimizeBox = true;
-        ClientSize = new Size(480, 680);
+        Title = "Allsio Push — Sign In";
+        this.SetWindowSize(480, 640);
+        this.CenterOnScreen();
+        WindowIcon.Apply(this);
+        SystemBackdrop = new MicaBackdrop();
 
-        _loadingLabel = new Label
+        _webView = new WebView2 { Visibility = Visibility.Collapsed };
+
+        _statusText = new TextBlock
         {
             Text = "Loading sign-in…",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 11f),
-            ForeColor = Color.Gray,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 12, 0, 0),
         };
-
-        _errorLabel = new Label
+        _statusPanel = new StackPanel
         {
-            Dock = DockStyle.Top,
-            Height = 80,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font(SystemFonts.DefaultFont.FontFamily, 10f),
-            ForeColor = Color.Firebrick,
-            Visible = false,
-            Padding = new Padding(16),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { new ProgressRing { IsActive = true, Width = 40, Height = 40 }, _statusText },
         };
 
-        _retryButton = new Button
+        _errorText = new TextBlock
         {
-            Text = "Retry",
-            Dock = DockStyle.Bottom,
-            Height = 40,
-            Visible = false,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed),
         };
-        _retryButton.Click += async (s, e) => await RetryAsync();
+        var retry = new Button
+        {
+            Content = "Retry",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 0),
+        };
+        retry.Click += async (_, _) => await RetryAsync();
+        _errorPanel = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(24),
+            Visibility = Visibility.Collapsed,
+            Children = { _errorText, retry },
+        };
 
-        _webView = new WebView2 { Dock = DockStyle.Fill, Visible = false };
+        var root = new Grid { RequestedTheme = ElementTheme.Dark };
+        root.Children.Add(_webView);
+        root.Children.Add(_statusPanel);
+        root.Children.Add(_errorPanel);
+        Content = root;
 
-        Controls.Add(_webView);
-        Controls.Add(_loadingLabel);
-        Controls.Add(_errorLabel);
-        Controls.Add(_retryButton);
-
-        Load += async (s, e) => await InitializeWebView();
+        root.Loaded += async (_, _) => await InitializeWebView();
     }
 
     private async Task InitializeWebView()
@@ -75,23 +85,22 @@ public class LoginWindow : Form
         {
             var userDataFolder = Path.Combine(SettingsManager.GetAppDataPath(), "WebView2");
             Directory.CreateDirectory(userDataFolder);
-            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+            var env = await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, userDataFolder, new CoreWebView2EnvironmentOptions());
             await _webView.EnsureCoreWebView2Async(env);
 
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
-
             _webView.CoreWebView2.NewWindowRequested += (s, e) =>
             {
                 if (e.Uri.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
                 {
                     e.Handled = true;
-                    HandleAllsioPushUri(e.Uri);
+                    _ = HandleAuthRedirect(e.Uri);
                 }
             };
 
-            _loadingLabel.Visible = false;
-            _webView.Visible = true;
-
+            _statusPanel.Visibility = Visibility.Collapsed;
+            _webView.Visibility = Visibility.Visible;
             await NavigateToLoginAsync();
         }
         catch (Exception ex)
@@ -107,9 +116,6 @@ public class LoginWindow : Form
     private string BuildLoginUrl()
         => $"{_settings.AdminBase}/extension-login?redirect=allsio-push://auth";
 
-    // Clears the persisted web session (the admin app's auth cookie) so the
-    // credential form is always shown instead of silently re-authenticating
-    // from a cached session. Used on both initial load and Retry/sign-out.
     private async Task NavigateToLoginAsync()
     {
         await ClearWebSessionAsync();
@@ -133,52 +139,37 @@ public class LoginWindow : Form
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
         if (string.IsNullOrEmpty(e.Uri)) return;
-
         if (e.Uri.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
         {
-            System.Diagnostics.Debug.WriteLine("[LoginWindow] Intercepted allsio-push:// auth redirect");
             e.Cancel = true;
-            HandleAllsioPushUri(e.Uri);
+            _ = HandleAuthRedirect(e.Uri);
         }
-    }
-
-    private void HandleAllsioPushUri(string uri)
-    {
-        _ = HandleAuthRedirect(uri);
     }
 
     private async Task HandleAuthRedirect(string uri)
     {
         if (_exchanging) return;
         _exchanging = true;
-
         try
         {
-            var parsed = new Uri(uri);
-            var token = ParseQueryParam(parsed.Query, "token");
-
+            var token = ParseQueryParam(new Uri(uri).Query, "token");
             if (string.IsNullOrWhiteSpace(token))
             {
                 ShowError("Sign-in did not return a token. Please try again.");
                 return;
             }
 
-            BeginInvoke(() =>
-            {
-                _webView.Visible = false;
-                _loadingLabel.Text = "Signing in…";
-                _loadingLabel.Visible = true;
-            });
+            _webView.Visibility = Visibility.Collapsed;
+            _statusText.Text = "Signing in…";
+            _statusPanel.Visibility = Visibility.Visible;
 
             var session = await _authService.ExchangeToken(token);
-
             if (session == null)
             {
                 ShowError("Sign-in failed. Please try again.");
                 return;
             }
-
-            BeginInvoke(() => OnLoginSuccess?.Invoke(session));
+            OnLoginSuccess?.Invoke(session);
         }
         catch (Exception ex)
         {
@@ -192,32 +183,26 @@ public class LoginWindow : Form
 
     private void ShowError(string message)
     {
-        void Apply()
+        DispatcherQueue.TryEnqueue(() =>
         {
-            _webView.Visible = false;
-            _loadingLabel.Visible = false;
-            _errorLabel.Text = message;
-            _errorLabel.Visible = true;
-            _retryButton.Visible = true;
-        }
-
-        if (InvokeRequired) BeginInvoke(Apply);
-        else Apply();
+            _webView.Visibility = Visibility.Collapsed;
+            _statusPanel.Visibility = Visibility.Collapsed;
+            _errorText.Text = message;
+            _errorPanel.Visibility = Visibility.Visible;
+        });
     }
 
     private async Task RetryAsync()
     {
-        _errorLabel.Visible = false;
-        _retryButton.Visible = false;
-
+        _errorPanel.Visibility = Visibility.Collapsed;
         if (_webView.CoreWebView2 != null)
         {
-            _webView.Visible = true;
+            _webView.Visibility = Visibility.Visible;
             await NavigateToLoginAsync();
         }
         else
         {
-            _loadingLabel.Visible = true;
+            _statusPanel.Visibility = Visibility.Visible;
             await InitializeWebView();
         }
     }
@@ -230,19 +215,9 @@ public class LoginWindow : Form
         {
             var idx = pair.IndexOf('=');
             if (idx < 0) continue;
-            var k = Uri.UnescapeDataString(pair[..idx]);
-            if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(Uri.UnescapeDataString(pair[..idx]), key, StringComparison.OrdinalIgnoreCase))
                 return Uri.UnescapeDataString(pair[(idx + 1)..]);
         }
         return null;
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            _webView?.Dispose();
-        }
-        base.Dispose(disposing);
     }
 }
