@@ -12,6 +12,7 @@ public class TrayManager : IDisposable
     public event EventHandler? OnOpenHistory;
     public event EventHandler? OnSignOut;
     public event EventHandler? OnExit;
+    public event EventHandler? OnCheckForUpdates;
 
     public TrayManager(AppSettings settings)
     {
@@ -42,6 +43,7 @@ public class TrayManager : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Notification History", null, (s, e) => OnOpenHistory?.Invoke(this, EventArgs.Empty));
         menu.Items.Add("Settings", null, (s, e) => OnOpenSettings?.Invoke(this, EventArgs.Empty));
+        menu.Items.Add("Check for Updates", null, (s, e) => OnCheckForUpdates?.Invoke(this, EventArgs.Empty));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Sign Out", null, (s, e) => OnSignOut?.Invoke(this, EventArgs.Empty));
         menu.Items.Add("Exit", null, (s, e) => OnExit?.Invoke(this, EventArgs.Empty));

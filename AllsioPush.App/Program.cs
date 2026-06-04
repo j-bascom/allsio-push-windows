@@ -3,6 +3,7 @@ using AllsioPush.Models;
 using AllsioPush.Services;
 using AllsioPush.UI.Tray;
 using AllsioPush.UI.Windows;
+using Velopack;
 
 namespace AllsioPush;
 
@@ -11,6 +12,31 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Velopack must run before anything else — it handles install/update/
+        // uninstall hooks and may exit the process for some of them.
+        VelopackApp.Build()
+            .OnFirstRun(v =>
+            {
+                // First run after install — nothing needed yet. The URI scheme
+                // and startup key are handled by SettingsManager during normal startup.
+            })
+            .OnAfterInstallFastCallback(v =>
+            {
+                // After install complete — register URI scheme.
+                SettingsManager.RegisterUriScheme();
+            })
+            .OnAfterUpdateFastCallback(v =>
+            {
+                // After update applied — re-register URI scheme in case the path changed.
+                SettingsManager.RegisterUriScheme();
+            })
+            .OnBeforeUninstallFastCallback(v =>
+            {
+                // Clean up before uninstall.
+                UninstallCleanup();
+            })
+            .Run();
+
         ApplicationConfiguration.Initialize();
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
 
@@ -253,6 +279,34 @@ static class Program
             Application.Exit();
         };
 
+        var updateService = new UpdateService();
+
+        tray.OnCheckForUpdates += async (s, e) =>
+        {
+            if (!updateService.IsInstalled)
+            {
+                tray.ShowBalloon("Allsio Push",
+                    "Update checks are only available in the installed version.");
+                return;
+            }
+            tray.ShowBalloon("Allsio Push", "Checking for updates...");
+            await updateService.CheckAndApplyUpdates(msg =>
+                uiContext.Post(_ => tray.ShowBalloon("Allsio Push", msg), null));
+        };
+
+        // Background update loop: first check 30s after startup, then every 4 hours.
+        // Skipped entirely when not installed (e.g. dotnet run in development).
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30));
+            while (true)
+            {
+                if (updateService.IsInstalled)
+                    await updateService.CheckAndApplyUpdates();
+                await Task.Delay(TimeSpan.FromHours(4));
+            }
+        });
+
         var heartbeatTimer = new System.Threading.Timer(async _ =>
         {
             var current = session;
@@ -298,6 +352,32 @@ static class Program
         pruneTimer.Dispose();
         heartbeatTimer.Dispose();
         pusher?.Dispose();
+    }
+
+    private static void UninstallCleanup()
+    {
+        try
+        {
+            // Remove URI scheme registration
+            Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(
+                @"Software\Classes\allsio-push", throwOnMissingSubKey: false);
+
+            // Remove startup registry entry
+            using var runKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            runKey?.DeleteValue("AllsioPush", throwOnMissingValue: false);
+
+            // Remove Windows Credential Manager entry
+            CredentialManager.ClearSession();
+
+            // No dialogs here — uninstall fast callback has no message loop.
+            // %APPDATA% user data is intentionally left intact (standard convention).
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[Uninstall] Cleanup error: {ex.Message}");
+        }
     }
 
     /// <summary>
