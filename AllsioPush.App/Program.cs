@@ -20,10 +20,13 @@ static class Program
 
         SettingsManager.RegisterUriScheme();
         var settings = SettingsManager.Load();
+        SettingsManager.SetLaunchOnStartup(settings.LaunchOnStartup);
+
         AuthSession? session = CredentialManager.LoadSession();
         var authService = new AuthService(settings);
+        var historyService = new HistoryService();
 
-        var ackService = new AckService(settings);
+        var ackService = new AckService(settings, historyService);
         if (session != null) ackService.SetSession(session);
 
         var windowTracker = new WindowTracker();
@@ -38,15 +41,28 @@ static class Program
         using var tray = new TrayManager(settings);
         PusherService? pusher = null;
         LoginWindow? loginWindow = null;
+        SettingsWindow? settingsWindow = null;
+        HistoryWindow? historyWindow = null;
 
-        var router = new NotificationRouter(settings, uiContext, toastService, ackService, windowTracker);
+        var router = new NotificationRouter(settings, uiContext, toastService, ackService, windowTracker, historyService);
+
+        // History entry persisted → push to open HistoryWindow live
+        router.OnEntrySaved += entry =>
+        {
+            uiContext.Post(_ => historyWindow?.AddEntry(entry), null);
+        };
+
+        // AckService recorded an action → update HistoryWindow card
+        ackService.OnActionRecorded += (id, action, by) =>
+        {
+            uiContext.Post(_ => historyWindow?.UpdateEntryAction(id, action, by), null);
+        };
 
         // Toast activation handler: must be registered before Application.Run.
         // When DeferToToast is on, clicking the toast body re-routes the original notification
         // through the router (which will then open the appropriate window).
         toastService.RegisterActivationHandler(notification =>
         {
-            // Open the window the toast was deferring — bypass DeferToToast on re-entry.
             var copy = notification;
             if (copy.DisplayMode == "popup" || copy.TemplateType == "custom_html"
                 || copy.TemplateType == "url_popup")
@@ -87,10 +103,13 @@ static class Program
             };
             pusher.OnAcknowledgementReceived += (notificationId, acknowledgedBy) =>
             {
+                // Persist remote ack to history too, so the card reflects it after restart.
+                _ = historyService.RecordAction(notificationId, "acknowledged", acknowledgedBy);
                 uiContext.Post(_ =>
                 {
                     windowTracker.BroadcastRemoteAck(notificationId, acknowledgedBy);
                     toastService.UpdateRemoteAck(notificationId, acknowledgedBy);
+                    historyWindow?.UpdateEntryAction(notificationId, "acknowledged", acknowledgedBy);
                 }, null);
             };
             await pusher.ConnectAsync();
@@ -118,24 +137,54 @@ static class Program
             loginWindow.Show();
         }
 
-        tray.OnOpenSettings += (s, e) =>
-            MessageBox.Show("Settings coming soon", "Allsio Push");
+        void ShowSettings()
+        {
+            if (settingsWindow != null && !settingsWindow.IsDisposed)
+            {
+                settingsWindow.Activate();
+                settingsWindow.BringToFront();
+                return;
+            }
+            settingsWindow = new SettingsWindow(settings, session, () => DoSignOut());
+            settingsWindow.FormClosed += (_, _) => settingsWindow = null;
+            settingsWindow.Show();
+        }
 
-        tray.OnOpenHistory += (s, e) =>
-            MessageBox.Show("History coming soon", "Allsio Push");
+        void ShowHistory()
+        {
+            if (historyWindow != null && !historyWindow.IsDisposed)
+            {
+                historyWindow.Activate();
+                historyWindow.BringToFront();
+                return;
+            }
+            historyWindow = new HistoryWindow(historyService, router, settings, () => session, uiContext);
+            historyWindow.FormClosed += (_, _) => historyWindow = null;
+            historyWindow.Show();
+        }
 
-        tray.OnSignOut += async (s, e) =>
+        async void DoSignOut()
         {
             if (session != null)
-                await authService.Logout(session.Token);
+            {
+                try { await authService.Logout(session.Token); } catch { }
+            }
             pusher?.Dispose();
             pusher = null;
             CredentialManager.ClearSession();
             session = null;
             ackService.SetSession(null);
             tray.SetConnected(false);
+
+            if (settingsWindow != null && !settingsWindow.IsDisposed) settingsWindow.Close();
+            if (historyWindow != null && !historyWindow.IsDisposed) historyWindow.Close();
+
             ShowLogin();
-        };
+        }
+
+        tray.OnOpenSettings += (s, e) => ShowSettings();
+        tray.OnOpenHistory += (s, e) => ShowHistory();
+        tray.OnSignOut += (s, e) => DoSignOut();
 
         tray.OnExit += (s, e) =>
         {
@@ -158,10 +207,18 @@ static class Program
                     session = null;
                     ackService.SetSession(null);
                     tray.SetConnected(false);
+                    if (settingsWindow != null && !settingsWindow.IsDisposed) settingsWindow.Close();
+                    if (historyWindow != null && !historyWindow.IsDisposed) historyWindow.Close();
                     ShowLogin();
                 });
             }
         }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
+        // Prune history after a 10s grace period so it doesn't slow startup.
+        var pruneTimer = new System.Threading.Timer(_ =>
+        {
+            _ = historyService.PruneOldEntries();
+        }, null, TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
 
         if (session != null)
         {
@@ -174,6 +231,7 @@ static class Program
 
         Application.Run();
 
+        pruneTimer.Dispose();
         heartbeatTimer.Dispose();
         pusher?.Dispose();
     }

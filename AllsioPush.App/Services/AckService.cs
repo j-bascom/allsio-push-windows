@@ -12,11 +12,15 @@ public class AckService
 {
     private readonly HttpClient _http;
     private readonly AppSettings _settings;
+    private readonly HistoryService _history;
     private AuthSession? _session;
 
-    public AckService(AppSettings settings)
+    public event Action<string, string, string?>? OnActionRecorded;
+
+    public AckService(AppSettings settings, HistoryService history)
     {
         _settings = settings;
+        _history = history;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
     }
 
@@ -31,32 +35,32 @@ public class AckService
         }
 
         var token = _session?.Token;
-        if (string.IsNullOrWhiteSpace(token))
+        if (!string.IsNullOrWhiteSpace(token))
         {
-            System.Diagnostics.Debug.WriteLine("[Ack] Skipping ack — no session token");
-            return;
-        }
-
-        try
-        {
-            var request = new HttpRequestMessage(HttpMethod.Post,
-                $"{_settings.ApiBase}/api/notifications/{Uri.EscapeDataString(notificationId)}/ack");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Content = new StringContent(
-                JsonSerializer.Serialize(new { buttonLabel, buttonAction }),
-                Encoding.UTF8, "application/json");
-
-            var response = await _http.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                var err = await response.Content.ReadAsStringAsync();
-                System.Diagnostics.Debug.WriteLine($"[Ack] Ack failed {response.StatusCode}: {err}");
+                var request = new HttpRequestMessage(HttpMethod.Post,
+                    $"{_settings.ApiBase}/api/notifications/{Uri.EscapeDataString(notificationId)}/ack");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                request.Content = new StringContent(
+                    JsonSerializer.Serialize(new { buttonLabel, buttonAction }),
+                    Encoding.UTF8, "application/json");
+
+                var response = await _http.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var err = await response.Content.ReadAsStringAsync();
+                    System.Diagnostics.Debug.WriteLine($"[Ack] Ack failed {response.StatusCode}: {err}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Ack] Ack exception: {ex.Message}");
             }
         }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"[Ack] Ack exception: {ex.Message}");
-        }
+
+        await _history.RecordAction(notificationId, buttonAction);
+        RaiseActionRecorded(notificationId, buttonAction, null);
     }
 
     public async Task Dismiss(string? notificationId, string buttonLabel)
@@ -112,6 +116,21 @@ public class AckService
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Ack] Webhook exception: {ex.Message}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(payload.NotificationId))
+        {
+            await _history.RecordAction(payload.NotificationId, "webhook");
+            RaiseActionRecorded(payload.NotificationId!, "webhook", null);
+        }
+    }
+
+    private void RaiseActionRecorded(string notificationId, string action, string? by)
+    {
+        try { OnActionRecorded?.Invoke(notificationId, action, by); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Ack] OnActionRecorded handler threw: {ex.Message}");
         }
     }
 }

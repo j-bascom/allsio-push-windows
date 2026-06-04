@@ -67,4 +67,31 @@ public static class SettingsManager
             System.Diagnostics.Debug.WriteLine($"[URIScheme] Registration failed: {ex.Message}");
         }
     }
+
+    public static void SetLaunchOnStartup(bool enable)
+    {
+        const string keyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string valueName = "AllsioPush";
+
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
+            if (key == null) return;
+
+            if (enable)
+            {
+                var exePath = Environment.ProcessPath ??
+                    System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName;
+                key.SetValue(valueName, $"\"{exePath}\" --startup");
+            }
+            else
+            {
+                key.DeleteValue(valueName, throwOnMissingValue: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Startup] SetLaunchOnStartup failed: {ex.Message}");
+        }
+    }
 }

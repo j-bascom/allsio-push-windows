@@ -11,23 +11,45 @@ public class NotificationRouter
     private readonly ToastService _toastService;
     private readonly AckService _ackService;
     private readonly WindowTracker _windowTracker;
+    private readonly HistoryService _history;
+
+    public event Action<HistoryEntry>? OnEntrySaved;
 
     public NotificationRouter(
         AppSettings settings,
         SynchronizationContext uiContext,
         ToastService toastService,
         AckService ackService,
-        WindowTracker windowTracker)
+        WindowTracker windowTracker,
+        HistoryService history)
     {
         _settings = settings;
         _uiContext = uiContext;
         _toastService = toastService;
         _ackService = ackService;
         _windowTracker = windowTracker;
+        _history = history;
     }
 
     public void Route(PushNotification notification)
     {
+        var receivedAt = DateTime.UtcNow;
+
+        // Persist to local history in the background; surface the saved entry
+        // to subscribers (e.g. open HistoryWindow) without blocking routing.
+        _ = Task.Run(async () =>
+        {
+            var entry = await _history.SaveNotification(notification, receivedAt);
+            if (entry != null)
+            {
+                try { OnEntrySaved?.Invoke(entry); }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Router] OnEntrySaved handler threw: {ex.Message}");
+                }
+            }
+        });
+
         if (notification.TemplateType == "url_tab")
         {
             if (!string.IsNullOrWhiteSpace(notification.Url))
