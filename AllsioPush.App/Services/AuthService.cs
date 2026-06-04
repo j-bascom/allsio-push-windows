@@ -44,7 +44,7 @@ public class AuthService
             return new AuthSession
             {
                 Token = token,
-                UserId = data.GetProperty("userId").GetString() ?? "",
+                UserId = GetStringFlexible(data, "userId"),
                 TenantId = data.GetProperty("tenantId").GetString() ?? "",
                 DisplayName = data.GetProperty("displayName").GetString() ?? "",
                 Email = data.GetProperty("email").GetString() ?? "",
@@ -60,6 +60,20 @@ public class AuthService
             System.Diagnostics.Debug.WriteLine($"[Auth] Exchange exception: {ex.Message}");
             return null;
         }
+    }
+
+    // The API returns some fields (e.g. userId) as JSON numbers; read them as
+    // strings regardless of whether the value is encoded as a string or number.
+    private static string GetStringFlexible(JsonElement data, string key)
+    {
+        if (!data.TryGetProperty(key, out var el)) return "";
+        return el.ValueKind switch
+        {
+            JsonValueKind.String => el.GetString() ?? "",
+            JsonValueKind.Number => el.GetRawText(),
+            JsonValueKind.Null => "",
+            _ => el.GetRawText(),
+        };
     }
 
     public async Task<bool> SendHeartbeat(string token)

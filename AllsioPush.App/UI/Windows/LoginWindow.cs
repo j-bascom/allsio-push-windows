@@ -28,7 +28,7 @@ public class LoginWindow : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = true;
-        ClientSize = new Size(480, 640);
+        ClientSize = new Size(480, 680);
 
         _loadingLabel = new Label
         {
@@ -92,7 +92,7 @@ public class LoginWindow : Form
             _loadingLabel.Visible = false;
             _webView.Visible = true;
 
-            Navigate();
+            await NavigateToLoginAsync();
         }
         catch (Exception ex)
         {
@@ -107,9 +107,27 @@ public class LoginWindow : Form
     private string BuildLoginUrl()
         => $"{_settings.AdminBase}/extension-login?redirect=allsio-push://auth";
 
-    private void Navigate()
+    // Clears the persisted web session (the admin app's auth cookie) so the
+    // credential form is always shown instead of silently re-authenticating
+    // from a cached session. Used on both initial load and Retry/sign-out.
+    private async Task NavigateToLoginAsync()
     {
+        await ClearWebSessionAsync();
         _webView.CoreWebView2.Navigate(BuildLoginUrl());
+    }
+
+    private async Task ClearWebSessionAsync()
+    {
+        if (_webView.CoreWebView2 == null) return;
+        try
+        {
+            await _webView.CoreWebView2.Profile.ClearBrowsingDataAsync(
+                CoreWebView2BrowsingDataKinds.Cookies | CoreWebView2BrowsingDataKinds.AllSite);
+        }
+        catch
+        {
+            _webView.CoreWebView2.CookieManager.DeleteAllCookies();
+        }
     }
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
@@ -195,7 +213,7 @@ public class LoginWindow : Form
         if (_webView.CoreWebView2 != null)
         {
             _webView.Visible = true;
-            Navigate();
+            await NavigateToLoginAsync();
         }
         else
         {

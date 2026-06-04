@@ -1,12 +1,22 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using AllsioPush.Config;
 
 namespace AllsioPush.UI.Tray;
 
 public class TrayManager : IDisposable
 {
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr handle);
+
+    private static readonly Bitmap? OnImage = LoadEmbeddedImage("icon-on-128.png");
+    private static readonly Bitmap? OffImage = LoadEmbeddedImage("icon-off-128.png");
+
     private readonly NotifyIcon _notifyIcon;
     private readonly AppSettings _settings;
     private bool _connected = false;
+    private IntPtr _iconHandle = IntPtr.Zero;
 
     public event EventHandler? OnOpenSettings;
     public event EventHandler? OnOpenHistory;
@@ -65,16 +75,50 @@ public class TrayManager : IDisposable
         }
     }
 
-    private static Icon CreateTrayIcon(bool connected)
+    private static Bitmap? LoadEmbeddedImage(string logicalName)
     {
-        var bmp = new Bitmap(16, 16);
-        using var g = Graphics.FromImage(bmp);
-        g.Clear(Color.Transparent);
-        var color = connected ? Color.FromArgb(34, 197, 94) : Color.FromArgb(156, 163, 175);
-        using var brush = new SolidBrush(color);
-        g.FillEllipse(brush, 2, 2, 12, 12);
-        var handle = bmp.GetHicon();
-        return Icon.FromHandle(handle);
+        try
+        {
+            using var stream = typeof(TrayManager).Assembly.GetManifestResourceStream(logicalName);
+            return stream == null ? null : new Bitmap(stream);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private Icon CreateTrayIcon(bool connected)
+    {
+        const int size = 32;
+        using var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.Clear(Color.Transparent);
+            var src = connected ? OnImage : OffImage;
+            if (src != null)
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.DrawImage(src, new Rectangle(0, 0, size, size));
+            }
+            else
+            {
+                var color = connected ? Color.FromArgb(34, 197, 94) : Color.FromArgb(156, 163, 175);
+                using var brush = new SolidBrush(color);
+                g.FillEllipse(brush, 4, 4, size - 8, size - 8);
+            }
+        }
+
+        // Release the previous native icon handle before creating a new one.
+        if (_iconHandle != IntPtr.Zero)
+        {
+            DestroyIcon(_iconHandle);
+            _iconHandle = IntPtr.Zero;
+        }
+        _iconHandle = bmp.GetHicon();
+        return Icon.FromHandle(_iconHandle);
     }
 
     public void ShowBalloon(string title, string message, int timeoutMs = 3000)
@@ -86,5 +130,10 @@ public class TrayManager : IDisposable
     {
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        if (_iconHandle != IntPtr.Zero)
+        {
+            DestroyIcon(_iconHandle);
+            _iconHandle = IntPtr.Zero;
+        }
     }
 }
