@@ -20,6 +20,7 @@ public partial class App : Application
     private ToastService _toastService = null!;
     private NotificationRouter _router = null!;
     private UpdateService _updateService = null!;
+    private SupervisedTransferService _transferService = null!;
     private TrayManager _tray = null!;
     private SingleInstanceService _singleInstance = null!;
     private PusherService? _pusher;
@@ -102,6 +103,7 @@ public partial class App : Application
 
         _windowTracker = new WindowTracker();
         _toastService = new ToastService(_settings, _ackService, _uiContext);
+        _transferService = new SupervisedTransferService(_settings, _ackService);
 
         var startupToken = ExtractToken(cmdline);
 
@@ -133,6 +135,14 @@ public partial class App : Application
                 _uiContext.Post(_ => presenter.ShowSlideout(copy), null);
             }
         });
+
+        _toastService.OnTransferAction += (action, connectionId) =>
+        {
+            if (action == "transfer_accept")
+                _transferService.AcceptTransfer(connectionId);
+            else
+                _transferService.DeclineTransfer(connectionId);
+        };
 
         _singleInstance.OnSecondInstanceArgs += incomingArgs =>
         {
@@ -250,6 +260,8 @@ public partial class App : Application
                 _historyWindow?.UpdateEntryAction(notificationId, "acknowledged", acknowledgedBy);
             }, null);
         };
+        _pusher.OnSupervisedTransfer += req => _transferService.HandleTransferRequest(req);
+        _pusher.OnSupervisedTransferCancelled += id => _transferService.HandleCancellation(id);
         await _pusher.ConnectAsync();
     }
 

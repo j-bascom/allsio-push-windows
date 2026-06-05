@@ -25,6 +25,8 @@ public class PusherService : IDisposable
     public event Action<bool>? OnConnectionStateChanged;
     public event Action<IReadOnlyList<string>>? OnChannelsChanged;
     public event Action<List<PushGroup>>? OnChannelsUpdated;
+    public event Action<SupervisedTransferRequest>? OnSupervisedTransfer;
+    public event Action<string>? OnSupervisedTransferCancelled;
 
     public IReadOnlyList<string> SubscribedChannels
     {
@@ -185,6 +187,9 @@ public class PusherService : IDisposable
                             $"[Pusher] channels_updated parse error: {ex.Message}");
                     }
                 });
+
+                channel.Bind("supervised_transfer", HandleSupervisedTransferEvent);
+                channel.Bind("supervised_transfer_cancelled", HandleSupervisedTransferCancelledEvent);
             }
         }
         catch (Exception ex)
@@ -366,6 +371,38 @@ public class PusherService : IDisposable
     private void HandleError(object sender, PusherException error)
     {
         System.Diagnostics.Debug.WriteLine($"[Pusher] error: {error.Message}");
+    }
+
+    private void HandleSupervisedTransferEvent(PusherEvent ev)
+    {
+        try
+        {
+            var req = Newtonsoft.Json.JsonConvert
+                .DeserializeObject<SupervisedTransferRequest>(ev.Data ?? "{}");
+            if (req == null) return;
+            System.Diagnostics.Debug.WriteLine(
+                $"[Pusher] Supervised transfer request: {req.ConnectionId} from {req.CallerName}");
+            OnSupervisedTransfer?.Invoke(req);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Pusher] supervised_transfer parse failed: {ex.Message}");
+        }
+    }
+
+    private void HandleSupervisedTransferCancelledEvent(PusherEvent ev)
+    {
+        try
+        {
+            var obj = Newtonsoft.Json.Linq.JObject.Parse(ev.Data ?? "{}");
+            var connectionId = (string?)obj["connectionId"] ?? (string?)obj["connection_id"] ?? "";
+            System.Diagnostics.Debug.WriteLine($"[Pusher] Supervised transfer cancelled: {connectionId}");
+            OnSupervisedTransferCancelled?.Invoke(connectionId);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Pusher] supervised_transfer_cancelled parse failed: {ex.Message}");
+        }
     }
 
     private void ScheduleReconnect()

@@ -14,6 +14,8 @@ public class ToastService
     private Action<PushNotification>? _openWindowCallback;
     private bool _activationRegistered = false;
 
+    public event Action<string, string>? OnTransferAction;
+
     public ToastService(AppSettings settings, AckService ackService, SynchronizationContext uiContext)
     {
         _settings = settings;
@@ -90,6 +92,13 @@ public class ToastService
                         var cb = _openWindowCallback;
                         _uiContext.Post(_ => cb(payload), null);
                     }
+                    break;
+                }
+            case "transfer_accept":
+            case "transfer_decline":
+                {
+                    var connectionId = args.Get("connectionId") ?? "";
+                    OnTransferAction?.Invoke(action, connectionId);
                     break;
                 }
         }

@@ -125,6 +125,28 @@ public class AckService
         }
     }
 
+    public async Task PostTransferAction(string url)
+    {
+        var token = _session?.Token;
+        if (string.IsNullOrWhiteSpace(token)) return;
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            var response = await _http.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var err = await response.Content.ReadAsStringAsync();
+                System.Diagnostics.Debug.WriteLine($"[Ack] PostTransferAction failed {response.StatusCode}: {err}");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Ack] PostTransferAction exception: {ex.Message}");
+        }
+    }
+
     private void RaiseActionRecorded(string notificationId, string action, string? by)
     {
         try { OnActionRecorded?.Invoke(notificationId, action, by); }
