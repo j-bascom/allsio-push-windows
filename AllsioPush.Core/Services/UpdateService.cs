@@ -17,30 +17,30 @@ public class UpdateService
 
     // Call this on startup after a 30s delay
     // and then every 4 hours
-    public async Task CheckAndApplyUpdates(Action<string>? onStatus = null)
+    public async Task CheckAndApplyUpdates(
+        Action<string>? onStatus = null,
+        Action<int?>? onProgress = null)
     {
         try
         {
             onStatus?.Invoke("Checking for updates...");
+            onProgress?.Invoke(null);
             var updateInfo = await _manager.CheckForUpdatesAsync();
 
             if (updateInfo == null)
             {
                 System.Diagnostics.Debug.WriteLine("[Update] No updates available");
-                onStatus?.Invoke("Allsio Push is up to date.");
+                onStatus?.Invoke("Software is up to date.");
                 return;
             }
 
-            onStatus?.Invoke($"Downloading update {updateInfo.TargetFullRelease.Version}...");
+            onStatus?.Invoke($"Installing update {updateInfo.TargetFullRelease.Version}...");
+            onProgress?.Invoke(0);
             System.Diagnostics.Debug.WriteLine(
                 $"[Update] Downloading {updateInfo.TargetFullRelease.Version}");
 
-            await _manager.DownloadUpdatesAsync(updateInfo);
+            await _manager.DownloadUpdatesAsync(updateInfo, pct => onProgress?.Invoke(pct));
 
-            System.Diagnostics.Debug.WriteLine("[Update] Update downloaded — will apply on next restart");
-            onStatus?.Invoke("Update ready — will install on next restart");
-
-            // Apply the downloaded release and relaunch the app.
             _manager.ApplyUpdatesAndRestart(updateInfo.TargetFullRelease);
         }
         catch (Exception ex)

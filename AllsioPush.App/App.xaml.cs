@@ -156,9 +156,20 @@ public partial class App : Application
                     "Update checks are only available in the installed version.");
                 return;
             }
-            _tray.ShowBalloon("Allsio Push", "Checking for updates...");
-            await _updateService.CheckAndApplyUpdates(msg =>
-                _uiContext.Post(_ => _tray.ShowBalloon("Allsio Push", msg), null));
+            var toast = new UpdateToastWindow();
+            toast.Activate();
+            try
+            {
+                await _updateService.CheckAndApplyUpdates(
+                    onStatus: toast.SetMessage,
+                    onProgress: toast.SetProgress);
+            }
+            finally
+            {
+                // Reached only when no update was found (restart case kills the process).
+                toast.HideProgress();
+                toast.AutoClose(4000);
+            }
         };
 
         _ = Task.Run(async () =>

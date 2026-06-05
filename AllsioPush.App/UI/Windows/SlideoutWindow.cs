@@ -12,7 +12,7 @@ using WinUIEx;
 
 namespace AllsioPush.UI.Windows;
 
-public class SlideoutWindow : WindowEx, IRemoteAckTarget
+public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
 {
     private static readonly SolidColorBrush GreenBrush = new(ColorHelper.FromArgb(255, 34, 197, 94));
 
@@ -35,8 +35,12 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
     private int _pixelWidth;
     private int _pixelHeight;
 
-    private static readonly List<SlideoutWindow> Stack = new();
-    private static readonly object StackLock = new();
+    int IStackableToast.PixelWidth => _pixelWidth;
+    int IStackableToast.PixelHeight => _pixelHeight;
+    bool IStackableToast.IsClosing => _closing;
+
+    internal static readonly List<IStackableToast> Stack = new();
+    internal static readonly object StackLock = new();
 
     public string? NotificationId => _notification.NotificationId;
 
@@ -144,14 +148,14 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
         if (removed) LayoutStack();
     }
 
-    // Stack open slideouts bottom-up along the right edge: newest sits at the
+    // Stack open toasts bottom-up along the right edge: newest sits at the
     // bottom, older ones step up by their own height plus a gap. Each window
     // moves itself on its own dispatcher so cross-thread moves stay safe.
-    private static void LayoutStack()
+    internal static void LayoutStack()
     {
         const int margin = 12;
         const int gap = 8;
-        SlideoutWindow[] snapshot;
+        IStackableToast[] snapshot;
         lock (StackLock) snapshot = Stack.ToArray();
 
         var area = DisplayArea.Primary.WorkArea;
@@ -159,13 +163,13 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget
         for (var i = snapshot.Length - 1; i >= 0; i--)
         {
             var win = snapshot[i];
-            var wy = y - win._pixelHeight;
-            var wx = area.X + area.Width - win._pixelWidth - margin;
+            var wy = y - win.PixelHeight;
+            var wx = area.X + area.Width - win.PixelWidth - margin;
             y = wy - gap;
             var pos = new PointInt32(wx, wy);
             win.DispatcherQueue.TryEnqueue(() =>
             {
-                if (win._closing) return;
+                if (win.IsClosing) return;
                 try { win.AppWindow.Move(pos); } catch { }
             });
         }
