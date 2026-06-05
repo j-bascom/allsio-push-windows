@@ -16,6 +16,7 @@ public class TrayManager : IDisposable
 
     private bool _connected;
     private bool _signedIn;
+    private bool _disposed;
     private IReadOnlyList<string> _channels = Array.Empty<string>();
 
     private MenuFlyoutItem _statusItem = null!;
@@ -101,6 +102,7 @@ public class TrayManager : IDisposable
 
     public void SetConnected(bool connected)
     {
+        if (_disposed) return;
         _connected = connected;
         var icon = connected ? _onIcon : _offIcon;
         _icon.Icon = icon;
@@ -112,6 +114,7 @@ public class TrayManager : IDisposable
 
     public void SetAuthState(bool signedIn)
     {
+        if (_disposed) return;
         _signedIn = signedIn;
         _authItem.Text = signedIn ? "Sign Out" : "Sign In";
         RefreshStatusItem();
@@ -119,6 +122,7 @@ public class TrayManager : IDisposable
 
     public void UpdateChannels(IReadOnlyList<string> channels)
     {
+        if (_disposed) return;
         _channels = channels ?? Array.Empty<string>();
         RebuildChannelsSubmenu();
     }
@@ -155,6 +159,7 @@ public class TrayManager : IDisposable
 
     public void ShowBalloon(string title, string message, int timeoutMs = 3000)
     {
+        if (_disposed) return;
         try { _icon.ShowNotification(title: title, message: message); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Tray] balloon failed: {ex.Message}"); }
     }
@@ -182,6 +187,7 @@ public class TrayManager : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         try { _icon.Dispose(); } catch { }
         try { _onIcon.Dispose(); } catch { }
         try { _offIcon.Dispose(); } catch { }

@@ -22,8 +22,33 @@ public class SingleInstanceService : IDisposable
     public SingleInstanceService(SynchronizationContext uiContext)
     {
         _uiContext = uiContext;
-        _mutex = new Mutex(initiallyOwned: true, MutexName, out _isFirstInstance);
-        _mutexOwned = _isFirstInstance;
+        try
+        {
+            _mutex = new Mutex(initiallyOwned: true, MutexName, out _isFirstInstance);
+            _mutexOwned = _isFirstInstance;
+        }
+        catch (AbandonedMutexException)
+        {
+            // Previous owner crashed without releasing — we inherit ownership.
+            _isFirstInstance = true;
+            _mutexOwned = true;
+        }
+
+        // Mutex already existed (createdNew=false). Try a zero-timeout acquire to
+        // distinguish an abandoned/unowned mutex from one held by a live instance.
+        if (!_isFirstInstance && _mutex != null)
+        {
+            try
+            {
+                _isFirstInstance = _mutex.WaitOne(0);
+                _mutexOwned = _isFirstInstance;
+            }
+            catch (AbandonedMutexException)
+            {
+                _isFirstInstance = true;
+                _mutexOwned = true;
+            }
+        }
     }
 
     public void StartPipeServer()

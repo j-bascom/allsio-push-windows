@@ -207,11 +207,24 @@ public partial class App : Application
         _pusher.OnConnectionStateChanged += connected =>
             _uiContext.Post(_ => _tray.SetConnected(connected), null);
         _pusher.OnChannelsChanged += channels =>
-            _uiContext.Post(_ => _tray.UpdateChannels(channels), null);
+            _uiContext.Post(_ =>
+            {
+                var session = _session;
+                var groups = session?.PushGroups ?? [];
+                var personal = session?.PersonalChannel ?? string.Empty;
+                var displayNames = channels
+                    .Select(c =>
+                    {
+                        if (c == personal)
+                            return string.IsNullOrWhiteSpace(session?.DisplayName)
+                                ? "Personal" : session.DisplayName;
+                        return groups.FirstOrDefault(g => g.PusherChannel == c)?.Name ?? c;
+                    })
+                    .ToArray();
+                _tray.UpdateChannels(displayNames);
+            }, null);
         _pusher.OnChannelsUpdated += _ =>
         {
-            // PusherService already updated _session.PushGroups; persist the change so
-            // the new group list survives an app restart.
             if (_session != null) CredentialManager.SaveSession(_session);
         };
         _pusher.OnNotificationReceived += notification =>

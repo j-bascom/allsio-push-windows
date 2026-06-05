@@ -170,13 +170,12 @@ public class PusherService : IDisposable
             }
             else
             {
-                channel.Bind("channels_updated", (dynamic data) =>
+                channel.Bind("channels_updated", (PusherEvent ev) =>
                 {
                     try
                     {
-                        var json = Newtonsoft.Json.JsonConvert.SerializeObject(data);
                         var payload = Newtonsoft.Json.JsonConvert
-                            .DeserializeObject<ChannelsUpdatedPayload>(json);
+                            .DeserializeObject<ChannelsUpdatedPayload>(ev.Data ?? "{}");
                         if (payload?.PushGroups == null) return;
                         HandleChannelsUpdated(payload.PushGroups);
                     }
