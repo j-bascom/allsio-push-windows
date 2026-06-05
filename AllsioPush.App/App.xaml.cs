@@ -208,6 +208,12 @@ public partial class App : Application
             _uiContext.Post(_ => _tray.SetConnected(connected), null);
         _pusher.OnChannelsChanged += channels =>
             _uiContext.Post(_ => _tray.UpdateChannels(channels), null);
+        _pusher.OnChannelsUpdated += _ =>
+        {
+            // PusherService already updated _session.PushGroups; persist the change so
+            // the new group list survives an app restart.
+            if (_session != null) CredentialManager.SaveSession(_session);
+        };
         _pusher.OnNotificationReceived += notification =>
             _uiContext.Post(_ => _router.Route(notification), null);
         _pusher.OnAcknowledgementReceived += (notificationId, acknowledgedBy) =>

@@ -24,6 +24,7 @@ public class PusherService : IDisposable
     public event Action<string, string>? OnAcknowledgementReceived;
     public event Action<bool>? OnConnectionStateChanged;
     public event Action<IReadOnlyList<string>>? OnChannelsChanged;
+    public event Action<List<PushGroup>>? OnChannelsUpdated;
 
     public IReadOnlyList<string> SubscribedChannels
     {
@@ -116,7 +117,7 @@ public class PusherService : IDisposable
         foreach (var group in _session.PushGroups)
         {
             if (string.IsNullOrWhiteSpace(group.PusherChannel)) continue;
-            await SubscribeChannel(pusher, group.PusherChannel, isGroup: true).ConfigureAwait(false);
+            await SubscribeToGroupChannel(group).ConfigureAwait(false);
         }
     }
 
@@ -167,11 +168,82 @@ public class PusherService : IDisposable
                     }
                 });
             }
+            else
+            {
+                channel.Bind("channels_updated", (dynamic data) =>
+                {
+                    try
+                    {
+                        var json = Newtonsoft.Json.JsonConvert.SerializeObject(data);
+                        var payload = Newtonsoft.Json.JsonConvert
+                            .DeserializeObject<ChannelsUpdatedPayload>(json);
+                        if (payload?.PushGroups == null) return;
+                        HandleChannelsUpdated(payload.PushGroups);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Pusher] channels_updated parse error: {ex.Message}");
+                    }
+                });
+            }
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Pusher] subscribe '{channelName}' failed: {ex.Message}");
         }
+    }
+
+    private async Task SubscribeToGroupChannel(PushGroup group)
+    {
+        if (_pusher == null) return;
+        await SubscribeChannel(_pusher, group.PusherChannel, isGroup: true).ConfigureAwait(false);
+    }
+
+    private void HandleChannelsUpdated(List<PushGroup> newGroups)
+    {
+        HashSet<string> currentChannels;
+        lock (_channelsLock) { currentChannels = _subscribedChannels.ToHashSet(); }
+
+        var newChannelNames = newGroups
+            .Select(g => g.PusherChannel)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .ToHashSet();
+
+        // Subscribe to channels that are new
+        foreach (var group in newGroups)
+        {
+            if (string.IsNullOrWhiteSpace(group.PusherChannel)) continue;
+            if (!currentChannels.Contains(group.PusherChannel))
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Pusher] Subscribing to new group: {group.PusherChannel}");
+                _ = SubscribeToGroupChannel(group);
+            }
+        }
+
+        // Unsubscribe from channels that were removed (never touch the personal channel)
+        foreach (var channel in currentChannels)
+        {
+            if (channel == _session.PersonalChannel) continue;
+            if (!newChannelNames.Contains(channel))
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Pusher] Unsubscribing from removed group: {channel}");
+                if (_pusher != null) _ = _pusher.UnsubscribeAsync(channel);
+                lock (_channelsLock) { _subscribedChannels.Remove(channel); }
+            }
+        }
+
+        _session.PushGroups = newGroups;
+        OnChannelsChanged?.Invoke(SubscribedChannels);
+        OnChannelsUpdated?.Invoke(newGroups);
+    }
+
+    private sealed class ChannelsUpdatedPayload
+    {
+        [Newtonsoft.Json.JsonProperty("pushGroups")]
+        public List<PushGroup>? PushGroups { get; set; }
     }
 
     private static PushNotification? ParseNotification(string? data, string channelName)
