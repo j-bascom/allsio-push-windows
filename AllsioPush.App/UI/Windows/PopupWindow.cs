@@ -21,6 +21,7 @@ public class PopupWindow : WindowEx, IRemoteAckTarget
     private readonly StackPanel _actionsPanel;
     private readonly TextBlock _loadingLabel;
     private Button? _ackButton;
+    private bool _initialLoadComplete = false;
 
     public string? NotificationId => _notification.NotificationId;
 
@@ -97,8 +98,44 @@ public class PopupWindow : WindowEx, IRemoteAckTarget
                 null, userDataFolder, new CoreWebView2EnvironmentOptions());
             await _webView.EnsureCoreWebView2Async(env);
 
-            _webView.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
-            _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
+            if (_notification.TemplateType == "custom_html")
+            {
+                _webView.NavigationCompleted += (_, e) =>
+                {
+                    if (!_initialLoadComplete && e.IsSuccess)
+                        _initialLoadComplete = true;
+                };
+                _webView.CoreWebView2.NewWindowRequested += (_, e) =>
+                {
+                    e.Handled = true;
+                    if (!string.IsNullOrEmpty(e.Uri) &&
+                        (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://")))
+                    {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = e.Uri,
+                            UseShellExecute = true,
+                        });
+                    }
+                };
+                _webView.CoreWebView2.NavigationStarting += (_, e) =>
+                {
+                    if (!_initialLoadComplete) return;
+                    if (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://"))
+                    {
+                        e.Cancel = true;
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = e.Uri,
+                            UseShellExecute = true,
+                        });
+                    }
+                };
+            }
+            else
+            {
+                _webView.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
+            }
 
             _loadingLabel.Visibility = Visibility.Collapsed;
             _webView.Visibility = Visibility.Visible;
@@ -116,18 +153,6 @@ public class PopupWindow : WindowEx, IRemoteAckTarget
         {
             _loadingLabel.Text = "Could not load content.\nWebView2 runtime may be missing.\n" + ex.Message;
             _loadingLabel.Visibility = Visibility.Visible;
-        }
-    }
-
-    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
-    {
-        if (_notification.TemplateType == "custom_html")
-        {
-            if (!e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                && !e.Uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
-            {
-                e.Cancel = true;
-            }
         }
     }
 
