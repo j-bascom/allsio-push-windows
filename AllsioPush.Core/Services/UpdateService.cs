@@ -27,6 +27,7 @@ public class UpdateService
             if (updateInfo == null)
             {
                 System.Diagnostics.Debug.WriteLine("[Update] No updates available");
+                onStatus?.Invoke("Allsio Push is up to date.");
                 return;
             }
 

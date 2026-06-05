@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using AllsioPush.Config;
 using AllsioPush.Services;
 using Microsoft.UI.Dispatching;
@@ -12,6 +13,10 @@ public static class Program
     {
         // Velopack must run before anything else — it handles install/update/
         // uninstall hooks and may exit the process for some of them.
+        // Match the AUMID Velopack stamps on shortcuts so the running process
+        // groups under the pinned taskbar button and inherits its icon.
+        SetCurrentProcessExplicitAppUserModelID("velopack.AllsioPush");
+
         VelopackApp.Build()
             .OnAfterInstallFastCallback(_ => SettingsManager.RegisterUriScheme())
             .OnAfterUpdateFastCallback(_ => SettingsManager.RegisterUriScheme())
@@ -28,6 +33,9 @@ public static class Program
             _ = new App();
         });
     }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
     internal static void UninstallCleanup()
     {
