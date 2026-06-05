@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using AllsioPush.Config;
 using Microsoft.UI.Xaml;
 
@@ -7,13 +8,32 @@ namespace AllsioPush.UI.Windows;
 internal static class WindowIcon
 {
     private static string? _icoPath;
+    private static System.Drawing.Icon? _icon;
+    private static nint _hIcon;
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern nint SendMessage(nint hWnd, int msg, nint wParam, nint lParam);
 
     public static void Apply(Window window)
     {
         try
         {
             var path = EnsureIcoFromPng();
-            if (path != null) window.AppWindow.SetIcon(path);
+            if (path == null) return;
+
+            window.AppWindow.SetIcon(path);
+
+            // AppWindow.SetIcon reliably sets the title-bar icon (ICON_SMALL) but
+            // not always the taskbar button. Send WM_SETICON(ICON_BIG) directly.
+            if (_hIcon == 0)
+            {
+                _icon = new System.Drawing.Icon(path);
+                _hIcon = _icon.Handle;
+            }
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            const int WmSetIcon = 0x0080;
+            SendMessage(hwnd, WmSetIcon, 0, _hIcon); // ICON_SMALL
+            SendMessage(hwnd, WmSetIcon, 1, _hIcon); // ICON_BIG  → taskbar
         }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[WindowIcon] failed: {ex.Message}"); }
     }
