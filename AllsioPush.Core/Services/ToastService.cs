@@ -281,14 +281,10 @@ public class ToastService
         {
             // Fallback for older flat payloads
             var line1Parts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(n.Stylist)) line1Parts.Add($"Stylist: {n.Stylist}");
-            if (!string.IsNullOrWhiteSpace(n.AppointmentDate)) line1Parts.Add(n.AppointmentDate);
+            if (!string.IsNullOrWhiteSpace(n.AppointmentDate)) line1Parts.Add($"Date: {n.AppointmentDate}");
+            if (!string.IsNullOrWhiteSpace(n.Service)) line1Parts.Add($"Service: {n.Service}");
             if (line1Parts.Count > 0) b.AddText(string.Join(" · ", line1Parts));
-
-            var line2Parts = new List<string>();
-            if (!string.IsNullOrWhiteSpace(n.Service)) line2Parts.Add(n.Service);
-            if (!string.IsNullOrWhiteSpace(n.Reason)) line2Parts.Add(n.Reason);
-            if (line2Parts.Count > 0) b.AddText(string.Join(" — ", line2Parts));
+            if (!string.IsNullOrWhiteSpace(n.Stylist)) b.AddText($"Staff Member: {n.Stylist}");
         }
 
         AddDefaultArgs(b, key, defaultAction: "openWindow");

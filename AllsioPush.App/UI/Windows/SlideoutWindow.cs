@@ -401,10 +401,9 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         else
         {
             // Fallback for older payloads that use flat scalar fields
-            AddRow("Stylist", _notification.Stylist);
-            AddRow("Appointment Time", _notification.AppointmentDate);
+            AddRow("Date", _notification.AppointmentDate);
             AddRow("Service", _notification.Service);
-            AddRow("Reason", _notification.Reason);
+            AddRow("Staff Member", _notification.Stylist);
         }
 
         return panel;
