@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using WinUIEx;
+using Microsoft.UI.Dispatching;
 
 namespace AllsioPush.UI.Windows;
 
@@ -15,8 +16,13 @@ public class UpdateToastWindow : WindowEx, IStackableToast
     private readonly TextBlock _messageText;
     private readonly ProgressBar _progressBar;
     private bool _closing;
+    private bool _positionedOnce;
+    private DispatcherQueueTimer? _slideTimer;
     private int _pixelWidth;
     private int _pixelHeight;
+
+    private const int SlideInMs = 250;
+    private const int SlideOutMs = 180;
 
     int IStackableToast.PixelWidth => _pixelWidth;
     int IStackableToast.PixelHeight => _pixelHeight;
@@ -84,6 +90,9 @@ public class UpdateToastWindow : WindowEx, IStackableToast
             p.IsMinimizable = false;
         }
         AppWindow.IsShownInSwitchers = false;
+        // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
+        var work = DisplayArea.Primary.WorkArea;
+        AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
     }
 
     private FrameworkElement BuildHeader()
@@ -175,10 +184,74 @@ public class UpdateToastWindow : WindowEx, IStackableToast
         });
     }
 
+    void IStackableToast.MoveTo(PointInt32 target)
+    {
+        if (!_positionedOnce)
+        {
+            _positionedOnce = true;
+            StartSlideIn(target);
+        }
+        else
+        {
+            AppWindow.Move(target);
+        }
+    }
+
+    private void StartSlideIn(PointInt32 target)
+    {
+        var work = DisplayArea.Primary.WorkArea;
+        var startX = work.X + work.Width;
+        var elapsed = 0;
+        AppWindow.Move(new PointInt32(startX, target.Y));
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideInMs);
+            var eased = 1.0 - (1.0 - t) * (1.0 - t);
+            var x = (int)(startX + (target.X - startX) * eased);
+            try { AppWindow.Move(new PointInt32(x, target.Y)); } catch { }
+            if (t >= 1.0) _slideTimer?.Stop();
+        };
+        _slideTimer.Start();
+    }
+
+    private void StartSlideOut(Action onComplete)
+    {
+        var startX = AppWindow.Position.X;
+        var startY = AppWindow.Position.Y;
+        var endX = DisplayArea.Primary.WorkArea.X + DisplayArea.Primary.WorkArea.Width;
+        var elapsed = 0;
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideOutMs);
+            var eased = t * t;
+            var x = (int)(startX + (endX - startX) * eased);
+            try { AppWindow.Move(new PointInt32(x, startY)); } catch { }
+            if (t >= 1.0)
+            {
+                _slideTimer?.Stop();
+                onComplete();
+            }
+        };
+        _slideTimer.Start();
+    }
+
     private void BeginHide()
     {
         if (_closing) return;
         _closing = true;
-        Close();
+        _slideTimer?.Stop();
+        StartSlideOut(() => Close());
     }
 }

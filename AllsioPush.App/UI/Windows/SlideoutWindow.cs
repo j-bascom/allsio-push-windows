@@ -27,10 +27,15 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private Button _copyButton = null!;
 
     private DispatcherQueueTimer? _ttlTimer;
+    private DispatcherQueueTimer? _slideTimer;
     private int _ttlElapsedMs;
     private int _ttlTotalMs;
     private bool _ttlPaused;
     private bool _closing;
+    private bool _positionedOnce;
+
+    private const int SlideInMs = 250;
+    private const int SlideOutMs = 180;
 
     private int _pixelWidth;
     private int _pixelHeight;
@@ -119,6 +124,9 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             p.IsMinimizable = false;
         }
         AppWindow.IsShownInSwitchers = false;
+        // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
+        var work = DisplayArea.Primary.WorkArea;
+        AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
     }
 
     private void SizeAndPosition(FrameworkElement root)
@@ -170,9 +178,72 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             win.DispatcherQueue.TryEnqueue(() =>
             {
                 if (win.IsClosing) return;
-                try { win.AppWindow.Move(pos); } catch { }
+                try { win.MoveTo(pos); } catch { }
             });
         }
+    }
+
+    void IStackableToast.MoveTo(PointInt32 target)
+    {
+        if (!_positionedOnce)
+        {
+            _positionedOnce = true;
+            StartSlideIn(target);
+        }
+        else
+        {
+            AppWindow.Move(target);
+        }
+    }
+
+    private void StartSlideIn(PointInt32 target)
+    {
+        var work = DisplayArea.Primary.WorkArea;
+        var startX = work.X + work.Width;
+        var elapsed = 0;
+        AppWindow.Move(new PointInt32(startX, target.Y));
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideInMs);
+            var eased = 1.0 - (1.0 - t) * (1.0 - t);
+            var x = (int)(startX + (target.X - startX) * eased);
+            try { AppWindow.Move(new PointInt32(x, target.Y)); } catch { }
+            if (t >= 1.0) _slideTimer?.Stop();
+        };
+        _slideTimer.Start();
+    }
+
+    private void StartSlideOut(Action onComplete)
+    {
+        var startX = AppWindow.Position.X;
+        var startY = AppWindow.Position.Y;
+        var endX = DisplayArea.Primary.WorkArea.X + DisplayArea.Primary.WorkArea.Width;
+        var elapsed = 0;
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideOutMs);
+            var eased = t * t;
+            var x = (int)(startX + (endX - startX) * eased);
+            try { AppWindow.Move(new PointInt32(x, startY)); } catch { }
+            if (t >= 1.0)
+            {
+                _slideTimer?.Stop();
+                onComplete();
+            }
+        };
+        _slideTimer.Start();
     }
 
     private FrameworkElement BuildHeader()
@@ -388,7 +459,8 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         if (_closing) return;
         _closing = true;
         _ttlTimer?.Stop();
-        Close();
+        _slideTimer?.Stop();
+        StartSlideOut(() => Close());
     }
 
     public void RemoteAcknowledged(string acknowledgedBy)

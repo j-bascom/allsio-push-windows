@@ -1,5 +1,6 @@
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
+using Windows.Graphics;
 
 namespace AllsioPush.UI.Windows;
 
@@ -10,4 +11,5 @@ internal interface IStackableToast
     bool IsClosing { get; }
     AppWindow AppWindow { get; }
     DispatcherQueue DispatcherQueue { get; }
+    void MoveTo(PointInt32 target);
 }
