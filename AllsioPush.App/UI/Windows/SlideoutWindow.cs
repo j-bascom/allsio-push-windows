@@ -159,7 +159,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         var h = Math.Clamp(root.DesiredSize.Height, 120, 480);
         var dpi = this.GetDpiForWindow() / 96.0;
         _pixelWidth = (int)Math.Ceiling(_width * dpi);
-        _pixelHeight = (int)Math.Ceiling(h * dpi);
+        _pixelHeight = (int)Math.Ceiling(h * dpi) + 2; // +2px prevents arrange-pass rounding from clipping the last row
         AppWindow.Resize(new SizeInt32(_pixelWidth, _pixelHeight));
         AddToStack();
     }
