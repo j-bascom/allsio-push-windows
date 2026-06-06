@@ -345,6 +345,37 @@ public class PusherService : IDisposable
             }
         }
 
+        // templateFields: [{ key, label, required, description }] with values as flat payload fields
+        var templateFields = obj["templateFields"];
+        if (templateFields != null &&
+            templateFields.Type == JTokenType.Array &&
+            n.Rows.Count == 0)
+        {
+            foreach (var field in templateFields)
+            {
+                var key = field["key"]?.ToString();
+                var label = field["label"]?.ToString();
+                if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(label))
+                    continue;
+
+                string? value = null;
+                if (n.Extras.TryGetValue(key, out var extrasVal))
+                    value = extrasVal;
+                else
+                {
+                    var token = obj[key];
+                    if (token != null &&
+                        token.Type != JTokenType.Null &&
+                        token.Type != JTokenType.Object &&
+                        token.Type != JTokenType.Array)
+                        value = token.ToString();
+                }
+
+                if (!string.IsNullOrWhiteSpace(value))
+                    n.Rows.Add(new NotificationRow { Label = label, Value = value });
+            }
+        }
+
         if (obj["buttons"] is JArray buttonsArr)
         {
             foreach (var b in buttonsArr)
