@@ -28,6 +28,10 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
 
     private DispatcherQueueTimer? _ttlTimer;
     private DispatcherQueueTimer? _slideTimer;
+    private DispatcherQueueTimer? _slideYTimer;
+    private bool _slideInComplete;
+    private PointInt32 _slideTarget;
+    private IntPtr _hwnd;
     private int _ttlElapsedMs;
     private int _ttlTotalMs;
     private bool _ttlPaused;
@@ -127,6 +131,26 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
         var work = DisplayArea.Primary.WorkArea;
         AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
+        InitLayeredAlpha();
+    }
+
+    private void InitLayeredAlpha()
+    {
+        _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var ex = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
+        NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, ex | (nint)NativeMethods.WS_EX_LAYERED);
+        NativeMethods.SetLayeredWindowAttributes(_hwnd, 0, 0, NativeMethods.LWA_ALPHA);
+    }
+
+    private void SetWindowOpacity(byte alpha) =>
+        NativeMethods.SetLayeredWindowAttributes(_hwnd, 0, alpha, NativeMethods.LWA_ALPHA);
+
+    private void EnsureOpaque()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        NativeMethods.SetLayeredWindowAttributes(_hwnd, 0, 255, NativeMethods.LWA_ALPHA);
+        var ex = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
+        NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, ex & ~(nint)NativeMethods.WS_EX_LAYERED);
     }
 
     private void SizeAndPosition(FrameworkElement root)
@@ -190,18 +214,23 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             _positionedOnce = true;
             StartSlideIn(target);
         }
+        else if (!_slideInComplete)
+        {
+            _slideTarget = new PointInt32(_slideTarget.X, target.Y);
+        }
         else
         {
-            AppWindow.Move(target);
+            StartRepositionAnim(target);
         }
     }
 
     private void StartSlideIn(PointInt32 target)
     {
+        _slideTarget = target;
         var work = DisplayArea.Primary.WorkArea;
         var startX = work.X + work.Width;
         var elapsed = 0;
-        AppWindow.Move(new PointInt32(startX, target.Y));
+        AppWindow.Move(new PointInt32(startX, _slideTarget.Y));
 
         _slideTimer?.Stop();
         _slideTimer = DispatcherQueue.CreateTimer();
@@ -212,11 +241,39 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             elapsed += 16;
             var t = Math.Min(1.0, (double)elapsed / SlideInMs);
             var eased = 1.0 - (1.0 - t) * (1.0 - t);
-            var x = (int)(startX + (target.X - startX) * eased);
-            try { AppWindow.Move(new PointInt32(x, target.Y)); } catch { }
-            if (t >= 1.0) _slideTimer?.Stop();
+            var x = (int)(startX + (_slideTarget.X - startX) * eased);
+            SetWindowOpacity((byte)(t * t * t * 255));
+            try { AppWindow.Move(new PointInt32(x, _slideTarget.Y)); } catch { }
+            if (t >= 1.0)
+            {
+                _slideInComplete = true;
+                _slideTimer?.Stop();
+                EnsureOpaque();
+            }
         };
         _slideTimer.Start();
+    }
+
+    private void StartRepositionAnim(PointInt32 target)
+    {
+        var startY = AppWindow.Position.Y;
+        if (startY == target.Y) return;
+        var elapsed = 0;
+        const int RepositionMs = 200;
+        _slideYTimer?.Stop();
+        _slideYTimer = DispatcherQueue.CreateTimer();
+        _slideYTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideYTimer.IsRepeating = true;
+        _slideYTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / RepositionMs);
+            var eased = 1.0 - (1.0 - t) * (1.0 - t);
+            var y = (int)(startY + (target.Y - startY) * eased);
+            try { AppWindow.Move(new PointInt32(target.X, y)); } catch { }
+            if (t >= 1.0) _slideYTimer?.Stop();
+        };
+        _slideYTimer.Start();
     }
 
     private void StartSlideOut(Action onComplete)
@@ -460,6 +517,8 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         _closing = true;
         _ttlTimer?.Stop();
         _slideTimer?.Stop();
+        _slideYTimer?.Stop();
+        EnsureOpaque();
         StartSlideOut(() => Close());
     }
 
