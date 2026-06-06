@@ -120,12 +120,35 @@ public class ToastService
         }
     }
 
+    // Returns false when Windows notifications are disabled for the app,
+    // so callers can fall back to the slideout path.
+    public bool TryShow(PushNotification n)
+    {
+        try
+        {
+            var setting = ToastNotificationManagerCompat.CreateToastNotifier().Setting;
+            if (setting != Windows.UI.Notifications.NotificationSetting.Enabled)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Toast] Notifications disabled: {setting}");
+                return false;
+            }
+        }
+        catch { /* unable to check — proceed */ }
+
+        Show(n);
+        return true;
+    }
+
     public void Show(PushNotification n)
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(n.NotificationId))
-                _byId[n.NotificationId] = n;
+            // Always store with a stable key so clicking the toast can retrieve
+            // the payload even when the server sends no NotificationId.
+            var key = string.IsNullOrWhiteSpace(n.NotificationId)
+                ? Guid.NewGuid().ToString("N")[..16]
+                : n.NotificationId;
+            _byId[key] = n;
 
             TrimCache();
 
@@ -134,37 +157,44 @@ public class ToastService
             switch (n.TemplateType)
             {
                 case "caller_card":
-                    BuildCallerCard(builder, n);
+                    BuildCallerCard(builder, n, key);
                     break;
                 case "appointment_alert":
-                    BuildAppointmentAlert(builder, n);
+                    BuildAppointmentAlert(builder, n, key);
                     break;
                 case "url_tab":
                 case "url_popup":
                     BuildUrlToast(builder, n);
                     break;
                 case "custom_html":
-                    BuildCustomHtmlToast(builder, n);
+                    BuildCustomHtmlToast(builder, n, key);
                     break;
                 case "plain_text":
                 default:
-                    BuildPlainText(builder, n);
+                    BuildPlainText(builder, n, key);
                     break;
             }
 
             ApplyAudio(builder, n);
-            ApplyButtons(builder, n);
+            ApplyButtons(builder, n, key);
 
-            var tag = string.IsNullOrWhiteSpace(n.NotificationId) ? "allsio" : SanitizeTag(n.NotificationId);
             builder.Show(toast =>
             {
-                toast.Tag = tag;
+                toast.Tag = SanitizeTag(key);
                 toast.Group = "AllsioPush";
             });
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Toast] Show failed: {ex.Message}");
+            try
+            {
+                var dir = Config.SettingsManager.GetAppDataPath();
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "error.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Toast.Show: {ex}\n");
+            }
+            catch { }
         }
     }
 
@@ -216,25 +246,25 @@ public class ToastService
         }
     }
 
-    private static void BuildPlainText(ToastContentBuilder b, PushNotification n)
+    private static void BuildPlainText(ToastContentBuilder b, PushNotification n, string key)
     {
         b.AddText(n.Title);
         if (!string.IsNullOrWhiteSpace(n.Content))
             b.AddText(Truncate(n.Content, 200));
-        AddDefaultArgs(b, n, defaultAction: "openWindow");
+        AddDefaultArgs(b, key, defaultAction: "openWindow");
     }
 
-    private static void BuildCallerCard(ToastContentBuilder b, PushNotification n)
+    private static void BuildCallerCard(ToastContentBuilder b, PushNotification n, string key)
     {
         b.AddText(string.IsNullOrWhiteSpace(n.Title) ? "Incoming Call" : n.Title);
         var line1 = n.CallerName ?? n.CallerPhone ?? "Unknown";
         b.AddText(line1);
         if (!string.IsNullOrWhiteSpace(n.Reason))
             b.AddText(Truncate(n.Reason, 200));
-        AddDefaultArgs(b, n, defaultAction: "openWindow");
+        AddDefaultArgs(b, key, defaultAction: "openWindow");
     }
 
-    private static void BuildAppointmentAlert(ToastContentBuilder b, PushNotification n)
+    private static void BuildAppointmentAlert(ToastContentBuilder b, PushNotification n, string key)
     {
         b.AddText(string.IsNullOrWhiteSpace(n.Title) ? "Appointment Alert" : n.Title);
         if (!string.IsNullOrWhiteSpace(n.AppointmentDate))
@@ -246,7 +276,7 @@ public class ToastService
         if (line2Parts.Count > 0)
             b.AddText(string.Join(" — ", line2Parts));
 
-        AddDefaultArgs(b, n, defaultAction: "openWindow");
+        AddDefaultArgs(b, key, defaultAction: "openWindow");
     }
 
     private static void BuildUrlToast(ToastContentBuilder b, PushNotification n)
@@ -260,22 +290,21 @@ public class ToastService
         if (!string.IsNullOrWhiteSpace(n.NotificationId)) b.AddArgument("id", n.NotificationId);
     }
 
-    private static void BuildCustomHtmlToast(ToastContentBuilder b, PushNotification n)
+    private static void BuildCustomHtmlToast(ToastContentBuilder b, PushNotification n, string key)
     {
         b.AddText(n.Title);
         if (!string.IsNullOrWhiteSpace(n.Content))
             b.AddText(Truncate(n.Content, 200));
-        AddDefaultArgs(b, n, defaultAction: "openWindow");
+        AddDefaultArgs(b, key, defaultAction: "openWindow");
     }
 
-    private static void AddDefaultArgs(ToastContentBuilder b, PushNotification n, string defaultAction)
+    private static void AddDefaultArgs(ToastContentBuilder b, string key, string defaultAction)
     {
         b.AddArgument("action", defaultAction);
-        if (!string.IsNullOrWhiteSpace(n.NotificationId))
-            b.AddArgument("id", n.NotificationId);
+        b.AddArgument("id", key);
     }
 
-    private static void ApplyButtons(ToastContentBuilder b, PushNotification n)
+    private static void ApplyButtons(ToastContentBuilder b, PushNotification n, string key)
     {
         if (n.TemplateType == "url_tab" || n.TemplateType == "url_popup")
             return;
@@ -295,28 +324,24 @@ public class ToastService
                 case "ack":
                     toastButton.AddArgument("action", "ack");
                     toastButton.AddArgument("label", label);
-                    if (!string.IsNullOrWhiteSpace(n.NotificationId))
-                        toastButton.AddArgument("id", n.NotificationId);
+                    toastButton.AddArgument("id", key);
                     break;
                 case "dismiss":
                     toastButton.AddArgument("action", "dismiss");
                     toastButton.AddArgument("label", label);
-                    if (!string.IsNullOrWhiteSpace(n.NotificationId))
-                        toastButton.AddArgument("id", n.NotificationId);
+                    toastButton.AddArgument("id", key);
                     break;
                 case "webhook":
                     toastButton.AddArgument("action", "webhook");
                     toastButton.AddArgument("buttonId", $"btn{i}");
-                    if (!string.IsNullOrWhiteSpace(n.NotificationId))
-                        toastButton.AddArgument("id", n.NotificationId);
+                    toastButton.AddArgument("id", key);
                     if (!string.IsNullOrWhiteSpace(btn.WebhookUrl))
                         toastButton.AddArgument("url", btn.WebhookUrl);
                     break;
                 default:
                     toastButton.AddArgument("action", btn.Action ?? "noop");
                     toastButton.AddArgument("label", label);
-                    if (!string.IsNullOrWhiteSpace(n.NotificationId))
-                        toastButton.AddArgument("id", n.NotificationId);
+                    toastButton.AddArgument("id", key);
                     break;
             }
 
@@ -324,14 +349,14 @@ public class ToastService
             hasAnyButton = true;
         }
 
-        if (!hasAnyButton && !string.IsNullOrWhiteSpace(n.NotificationId))
+        if (!hasAnyButton)
         {
             var defaultAck = new ToastButton()
                 .SetContent("Acknowledge")
                 .SetBackgroundActivation()
                 .AddArgument("action", "ack")
                 .AddArgument("label", "Acknowledge")
-                .AddArgument("id", n.NotificationId);
+                .AddArgument("id", key);
             b.AddButton(defaultAck);
         }
     }
@@ -352,8 +377,11 @@ public class ToastService
 
     private static string SanitizeTag(string id)
     {
-        if (id.Length <= 64) return id;
-        return id[..64];
+        var sb = new System.Text.StringBuilder();
+        foreach (var c in id)
+            sb.Append(char.IsLetterOrDigit(c) || c == '-' || c == '.' ? c : '_');
+        var s = sb.ToString();
+        return s.Length <= 64 ? s : s[..64];
     }
 
     private void TrimCache()

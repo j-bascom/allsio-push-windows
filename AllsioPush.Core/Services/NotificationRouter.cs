@@ -95,7 +95,10 @@ public class NotificationRouter
         if (string.Equals(notification.TemplateType, "caller_card", StringComparison.OrdinalIgnoreCase))
         {
             if (_settings.DeferToToast)
-                _toastService.Show(notification);
+            {
+                if (!_toastService.TryShow(notification))
+                    _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
+            }
             else
             {
                 _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
@@ -114,7 +117,8 @@ public class NotificationRouter
 
         if (_settings.DeferToToast)
         {
-            _toastService.Show(notification);
+            if (!_toastService.TryShow(notification))
+                _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
             return;
         }
 
