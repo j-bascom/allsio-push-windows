@@ -26,6 +26,11 @@ public class PushNotification
     public string? Service { get; set; }
     public string? Stylist { get; set; }
 
+    // Dynamic label/value rows for appointment_alert (and any future template
+    // that sends structured fields rather than a flat content string).
+    public List<NotificationRow> Rows { get; set; } = new();
+
+
     public string? SenderName { get; set; }
     public string? SenderPhone { get; set; }
     public string? ConversationId { get; set; }
@@ -36,6 +41,12 @@ public class PushNotification
 
     // Prior call history carried by caller_card notifications.
     public List<PriorCall> PriorCalls { get; set; } = new();
+}
+
+public class NotificationRow
+{
+    public string Label { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
 }
 
 public class NotificationButton

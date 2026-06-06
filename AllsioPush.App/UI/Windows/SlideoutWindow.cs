@@ -376,23 +376,37 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private FrameworkElement BuildAppointmentContent()
     {
         var panel = new StackPanel { Spacing = 4 };
+
         void AddRow(string label, string? value)
         {
             if (string.IsNullOrWhiteSpace(value)) return;
-            var inner = new StackPanel();
-            inner.Children.Add(new TextBlock { Text = label, Opacity = 0.7, FontSize = 11 });
-            inner.Children.Add(new TextBlock { Text = value, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 });
-            panel.Children.Add(new Border
-            {
-                Background = new SolidColorBrush(ColorHelper.FromArgb(255, 45, 45, 48)),
-                Padding = new Thickness(8),
-                Margin = new Thickness(0, 2, 0, 2),
-                Child = inner,
-            });
+            var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var lbl = new TextBlock { Text = label, Opacity = 0.7, FontSize = 12, VerticalAlignment = VerticalAlignment.Top };
+            var val = new TextBlock { Text = value, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13, TextWrapping = TextWrapping.Wrap };
+            Grid.SetColumn(lbl, 0);
+            Grid.SetColumn(val, 1);
+            row.Children.Add(lbl);
+            row.Children.Add(val);
+            panel.Children.Add(row);
         }
-        AddRow("WHEN", _notification.AppointmentDate);
-        AddRow("SERVICE", _notification.Service);
-        AddRow("STYLIST", _notification.Stylist);
+
+        if (_notification.Rows.Count > 0)
+        {
+            // Server sent dynamic rows — render them as-is
+            foreach (var r in _notification.Rows)
+                AddRow(r.Label, r.Value);
+        }
+        else
+        {
+            // Fallback for older payloads that use flat scalar fields
+            AddRow("Stylist", _notification.Stylist);
+            AddRow("Appointment Time", _notification.AppointmentDate);
+            AddRow("Service", _notification.Service);
+            AddRow("Reason", _notification.Reason);
+        }
+
         return panel;
     }
 

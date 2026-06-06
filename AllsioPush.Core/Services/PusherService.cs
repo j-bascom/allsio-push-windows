@@ -332,6 +332,19 @@ public class PusherService : IDisposable
             ConversationId = Get("conversationId", "conversation_id"),
         };
 
+        // Dynamic label/value rows — try "rows" then "fields"
+        var rowsArr = (obj["rows"] ?? obj["fields"]) as JArray;
+        if (rowsArr != null)
+        {
+            foreach (var r in rowsArr)
+            {
+                var label = (string?)(r["label"] ?? r["key"] ?? r["name"]) ?? "";
+                var value = (string?)(r["value"] ?? r["text"]) ?? "";
+                if (!string.IsNullOrWhiteSpace(label) || !string.IsNullOrWhiteSpace(value))
+                    n.Rows.Add(new NotificationRow { Label = label, Value = value });
+            }
+        }
+
         if (obj["buttons"] is JArray buttonsArr)
         {
             foreach (var b in buttonsArr)

@@ -267,14 +267,29 @@ public class ToastService
     private static void BuildAppointmentAlert(ToastContentBuilder b, PushNotification n, string key)
     {
         b.AddText(string.IsNullOrWhiteSpace(n.Title) ? "Appointment Alert" : n.Title);
-        if (!string.IsNullOrWhiteSpace(n.AppointmentDate))
-            b.AddText(n.AppointmentDate);
 
-        var line2Parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(n.Service)) line2Parts.Add(n.Service);
-        if (!string.IsNullOrWhiteSpace(n.Stylist)) line2Parts.Add(n.Stylist);
-        if (line2Parts.Count > 0)
-            b.AddText(string.Join(" — ", line2Parts));
+        if (n.Rows.Count > 0)
+        {
+            // Dynamic rows — toast supports 2 body lines; pack first 4 rows into 2 lines
+            var rows = n.Rows.Take(4).ToList();
+            if (rows.Count >= 1)
+                b.AddText(string.Join(" · ", rows.Take(2).Select(r => $"{r.Label}: {r.Value}")));
+            if (rows.Count >= 3)
+                b.AddText(string.Join(" · ", rows.Skip(2).Select(r => $"{r.Label}: {r.Value}")));
+        }
+        else
+        {
+            // Fallback for older flat payloads
+            var line1Parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(n.Stylist)) line1Parts.Add($"Stylist: {n.Stylist}");
+            if (!string.IsNullOrWhiteSpace(n.AppointmentDate)) line1Parts.Add(n.AppointmentDate);
+            if (line1Parts.Count > 0) b.AddText(string.Join(" · ", line1Parts));
+
+            var line2Parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(n.Service)) line2Parts.Add(n.Service);
+            if (!string.IsNullOrWhiteSpace(n.Reason)) line2Parts.Add(n.Reason);
+            if (line2Parts.Count > 0) b.AddText(string.Join(" — ", line2Parts));
+        }
 
         AddDefaultArgs(b, key, defaultAction: "openWindow");
     }
