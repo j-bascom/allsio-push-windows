@@ -30,6 +30,7 @@ public partial class App : Application
     private LoginWindow? _loginWindow;
     private SettingsWindow? _settingsWindow;
     private HistoryWindow? _historyWindow;
+    private DebugLogWindow? _debugLogWindow;
 
     private System.Threading.Timer? _heartbeatTimer;
     private System.Threading.Timer? _pruneTimer;
@@ -314,11 +315,27 @@ public partial class App : Application
                 _settingsWindow.Activate();
                 return;
             }
-            _settingsWindow = new SettingsWindow(_settings, _session, DoSignOut);
+            _settingsWindow = new SettingsWindow(_settings, _session, DoSignOut, ShowDebugLog);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Activate();
         }
         catch (Exception ex) { Log("ShowSettings", ex); }
+    }
+
+    private void ShowDebugLog()
+    {
+        try
+        {
+            if (_debugLogWindow != null)
+            {
+                _debugLogWindow.Activate();
+                return;
+            }
+            _debugLogWindow = new DebugLogWindow(_uiContext);
+            _debugLogWindow.Closed += (_, _) => _debugLogWindow = null;
+            _debugLogWindow.Activate();
+        }
+        catch (Exception ex) { Log("ShowDebugLog", ex); }
     }
 
     private void ShowHistory()
@@ -359,6 +376,7 @@ public partial class App : Application
         _tray.UpdateChannels(Array.Empty<string>());
         _settingsWindow?.Close();
         _historyWindow?.Close();
+        _debugLogWindow?.Close();
         ShowLogin();
     }
 

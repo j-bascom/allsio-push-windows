@@ -20,16 +20,18 @@ public class SettingsWindow : WindowEx
     private readonly AppSettings _settings;
     private readonly AuthSession? _session;
     private readonly Action _onSignOut;
+    private readonly Action _onOpenDebugLog;
 
     private TextBlock? _envWarning;
     private TextBlock? _envRestartNotice;
     private TextBlock? _displayModeDesc;
 
-    public SettingsWindow(AppSettings settings, AuthSession? session, Action onSignOut)
+    public SettingsWindow(AppSettings settings, AuthSession? session, Action onSignOut, Action onOpenDebugLog)
     {
         _settings = settings;
         _session = session;
         _onSignOut = onSignOut;
+        _onOpenDebugLog = onOpenDebugLog;
 
         Title = "Allsio Push — Settings";
         this.SetWindowSize(480, 600);
@@ -217,6 +219,20 @@ public class SettingsWindow : WindowEx
         var openFolder = new Button { Content = "Open app data folder", Margin = new Thickness(0, 4, 0, 4) };
         openFolder.Click += (_, _) => OpenAppDataFolder();
         section.Children.Add(openFolder);
+
+        var debugBtn = new Button
+        {
+            Content = "Debug Log",
+            Margin = new Thickness(0, 16, 0, 0),
+            Padding = new Thickness(8, 3, 8, 3),
+            Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 60, 60, 80)),
+            BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 50, 50, 70)),
+            BorderThickness = new Thickness(1),
+            FontSize = 11,
+        };
+        debugBtn.Click += (_, _) => _onOpenDebugLog();
+        section.Children.Add(debugBtn);
+
         return section;
     }
 

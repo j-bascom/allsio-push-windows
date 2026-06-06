@@ -43,6 +43,8 @@ public class PusherService : IDisposable
     {
         if (_disposed) return;
 
+        DebugLog.Write("Pusher", $"ConnectAsync — user={_session.DisplayName} cluster={_session.PusherCluster} key={_session.PusherAppKey}");
+
         _intentionalDisconnect = false;
         _reconnectCts?.Cancel();
         _reconnectCts = new CancellationTokenSource();
@@ -55,6 +57,7 @@ public class PusherService : IDisposable
         }
         catch (Exception ex)
         {
+            DebugLog.Write("Pusher", $"ConnectAsync failed: {ex.Message}");
             System.Diagnostics.Debug.WriteLine($"[Pusher] Connect failed: {ex.Message}");
             ScheduleReconnect();
         }
@@ -81,6 +84,7 @@ public class PusherService : IDisposable
 
     private async Task EstablishConnection()
     {
+        DebugLog.Write("Pusher", $"EstablishConnection — personal={_session.PersonalChannel} groups=[{string.Join(", ", _session.PushGroups.Select(g => g.PusherChannel))}]");
         // Reset the confirmed-channel list so a (re)connect rebuilds it from scratch.
         lock (_channelsLock) { _subscribedChannels.Clear(); }
         OnChannelsChanged?.Invoke(SubscribedChannels);
@@ -125,6 +129,7 @@ public class PusherService : IDisposable
 
     private async Task SubscribeChannel(Pusher pusher, string channelName, bool isGroup)
     {
+        DebugLog.Write("Pusher", $"Subscribing to {channelName} (isGroup={isGroup})");
         try
         {
             var channel = await pusher.SubscribeAsync(channelName).ConfigureAwait(false);
@@ -137,6 +142,7 @@ public class PusherService : IDisposable
                 added = !_subscribedChannels.Contains(channelName);
                 if (added) _subscribedChannels.Add(channelName);
             }
+            DebugLog.Write("Pusher", $"Subscribed OK: {channelName}");
             if (added) OnChannelsChanged?.Invoke(SubscribedChannels);
 
             var friendlyName = channelName == _session.PersonalChannel
@@ -145,6 +151,7 @@ public class PusherService : IDisposable
 
             channel.Bind("notification", (PusherEvent ev) =>
             {
+                DebugLog.Write("Event:notification", $"channel={channelName} data={ev.Data}");
                 try
                 {
                     var notification = ParseNotification(ev.Data, friendlyName);
@@ -153,6 +160,7 @@ public class PusherService : IDisposable
                 }
                 catch (Exception ex)
                 {
+                    DebugLog.Write("Pusher", $"notification parse failed: {ex.Message}");
                     System.Diagnostics.Debug.WriteLine($"[Pusher] notification parse failed: {ex.Message}");
                 }
             });
@@ -161,6 +169,7 @@ public class PusherService : IDisposable
             {
                 channel.Bind("notification_acknowledged", (PusherEvent ev) =>
                 {
+                    DebugLog.Write("Event:notification_acknowledged", $"channel={channelName} data={ev.Data}");
                     try
                     {
                         var obj = JObject.Parse(ev.Data ?? "{}");
@@ -170,6 +179,7 @@ public class PusherService : IDisposable
                     }
                     catch (Exception ex)
                     {
+                        DebugLog.Write("Pusher", $"ack parse failed: {ex.Message}");
                         System.Diagnostics.Debug.WriteLine($"[Pusher] ack parse failed: {ex.Message}");
                     }
                 });
@@ -178,15 +188,22 @@ public class PusherService : IDisposable
             {
                 channel.Bind("channels_updated", (PusherEvent ev) =>
                 {
+                    DebugLog.Write("Event:channels_updated", $"channel={channelName} data={ev.Data}");
                     try
                     {
                         var payload = Newtonsoft.Json.JsonConvert
                             .DeserializeObject<ChannelsUpdatedPayload>(ev.Data ?? "{}");
-                        if (payload?.PushGroups == null) return;
+                        if (payload?.PushGroups == null)
+                        {
+                            DebugLog.Write("Event:channels_updated", "WARNING — PushGroups was null after deserialize (check JSON field name)");
+                            return;
+                        }
+                        DebugLog.Write("Event:channels_updated", $"Parsed {payload.PushGroups.Count} groups: [{string.Join(", ", payload.PushGroups.Select(g => g.PusherChannel))}]");
                         HandleChannelsUpdated(payload.PushGroups);
                     }
                     catch (Exception ex)
                     {
+                        DebugLog.Write("Pusher", $"channels_updated parse error: {ex.Message}");
                         System.Diagnostics.Debug.WriteLine(
                             $"[Pusher] channels_updated parse error: {ex.Message}");
                     }
@@ -198,6 +215,7 @@ public class PusherService : IDisposable
         }
         catch (Exception ex)
         {
+            DebugLog.Write("Pusher", $"Subscribe '{channelName}' FAILED: {ex.Message}");
             System.Diagnostics.Debug.WriteLine($"[Pusher] subscribe '{channelName}' failed: {ex.Message}");
         }
     }
@@ -213,6 +231,8 @@ public class PusherService : IDisposable
         HashSet<string> currentChannels;
         lock (_channelsLock) { currentChannels = _subscribedChannels.ToHashSet(); }
 
+        DebugLog.Write("Pusher", $"HandleChannelsUpdated — current=[{string.Join(", ", currentChannels)}] new=[{string.Join(", ", newGroups.Select(g => g.PusherChannel))}]");
+
         var newChannelNames = newGroups
             .Select(g => g.PusherChannel)
             .Where(c => !string.IsNullOrWhiteSpace(c))
@@ -224,6 +244,7 @@ public class PusherService : IDisposable
             if (string.IsNullOrWhiteSpace(group.PusherChannel)) continue;
             if (!currentChannels.Contains(group.PusherChannel))
             {
+                DebugLog.Write("Pusher", $"Subscribing to new group: {group.PusherChannel} ({group.Name})");
                 System.Diagnostics.Debug.WriteLine(
                     $"[Pusher] Subscribing to new group: {group.PusherChannel}");
                 _ = SubscribeToGroupChannel(group);
@@ -236,6 +257,7 @@ public class PusherService : IDisposable
             if (channel == _session.PersonalChannel) continue;
             if (!newChannelNames.Contains(channel))
             {
+                DebugLog.Write("Pusher", $"Unsubscribing from removed group: {channel}");
                 System.Diagnostics.Debug.WriteLine(
                     $"[Pusher] Unsubscribing from removed group: {channel}");
                 if (_pusher != null) _ = _pusher.UnsubscribeAsync(channel);
@@ -355,6 +377,7 @@ public class PusherService : IDisposable
 
     private void HandleConnectionStateChanged(object sender, ConnectionState state)
     {
+        DebugLog.Write("Pusher", $"State → {state}");
         System.Diagnostics.Debug.WriteLine($"[Pusher] state -> {state}");
 
         if (state == ConnectionState.Connected)
@@ -374,11 +397,13 @@ public class PusherService : IDisposable
 
     private void HandleError(object sender, PusherException error)
     {
+        DebugLog.Write("Pusher", $"Error: {error.Message}");
         System.Diagnostics.Debug.WriteLine($"[Pusher] error: {error.Message}");
     }
 
     private void HandleSupervisedTransferEvent(PusherEvent ev)
     {
+        DebugLog.Write("Event:supervised_transfer", $"data={ev.Data}");
         try
         {
             var req = Newtonsoft.Json.JsonConvert
@@ -390,12 +415,14 @@ public class PusherService : IDisposable
         }
         catch (Exception ex)
         {
+            DebugLog.Write("Pusher", $"supervised_transfer parse failed: {ex.Message}");
             System.Diagnostics.Debug.WriteLine($"[Pusher] supervised_transfer parse failed: {ex.Message}");
         }
     }
 
     private void HandleSupervisedTransferCancelledEvent(PusherEvent ev)
     {
+        DebugLog.Write("Event:supervised_transfer_cancelled", $"data={ev.Data}");
         try
         {
             var obj = Newtonsoft.Json.Linq.JObject.Parse(ev.Data ?? "{}");
@@ -405,6 +432,7 @@ public class PusherService : IDisposable
         }
         catch (Exception ex)
         {
+            DebugLog.Write("Pusher", $"supervised_transfer_cancelled parse failed: {ex.Message}");
             System.Diagnostics.Debug.WriteLine($"[Pusher] supervised_transfer_cancelled parse failed: {ex.Message}");
         }
     }
@@ -416,6 +444,7 @@ public class PusherService : IDisposable
         _reconnectAttempt++;
         var delaySeconds = Math.Min(30, 2 * Math.Pow(2, _reconnectAttempt - 1));
         var delay = TimeSpan.FromSeconds(delaySeconds);
+        DebugLog.Write("Pusher", $"Reconnect scheduled in {delaySeconds}s (attempt {_reconnectAttempt})");
         System.Diagnostics.Debug.WriteLine($"[Pusher] reconnect in {delaySeconds}s (attempt {_reconnectAttempt})");
 
         // Cancel any existing reconnect task so only one is ever active at a time.
