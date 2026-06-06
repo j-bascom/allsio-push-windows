@@ -205,6 +205,8 @@ public partial class App : Application
             _ = _historyService.PruneOldEntries(),
             null, TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
 
+        Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
         _tray.SetAuthState(_session != null);
 
         if (_session != null)
@@ -377,8 +379,23 @@ public partial class App : Application
         });
     }
 
+    private void OnPowerModeChanged(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != Microsoft.Win32.PowerModes.Resume) return;
+        System.Diagnostics.Debug.WriteLine("[App] System resumed from sleep — scheduling Pusher reconnect");
+        _ = Task.Run(async () =>
+        {
+            // Give the network stack a few seconds to come back up after wake.
+            await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            var session = _session;
+            if (session == null) return;
+            _uiContext.Post(_ => _ = ConnectPusher(session), null);
+        });
+    }
+
     private void DoExit()
     {
+        try { Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged; } catch { }
         try { _heartbeatTimer?.Dispose(); } catch { }
         try { _pruneTimer?.Dispose(); } catch { }
         try { _pusher?.Dispose(); } catch { }

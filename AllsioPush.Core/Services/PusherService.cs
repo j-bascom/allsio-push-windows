@@ -412,9 +412,16 @@ public class PusherService : IDisposable
         _reconnectAttempt++;
         var delaySeconds = Math.Min(30, 2 * Math.Pow(2, _reconnectAttempt - 1));
         var delay = TimeSpan.FromSeconds(delaySeconds);
-        System.Diagnostics.Debug.WriteLine($"[Pusher] reconnect in {delay.TotalSeconds}s (attempt {_reconnectAttempt})");
+        System.Diagnostics.Debug.WriteLine($"[Pusher] reconnect in {delaySeconds}s (attempt {_reconnectAttempt})");
 
-        var token = _reconnectCts?.Token ?? CancellationToken.None;
+        // Cancel any existing reconnect task so only one is ever active at a time.
+        // Without this, multiple Disconnected events (keepalive + state change) pile
+        // up separate tasks that race and tear each other down once one succeeds.
+        var oldCts = _reconnectCts;
+        _reconnectCts = new CancellationTokenSource();
+        oldCts?.Cancel();
+        var token = _reconnectCts.Token;
+
         _ = Task.Run(async () =>
         {
             try
@@ -422,15 +429,18 @@ public class PusherService : IDisposable
                 await Task.Delay(delay, token).ConfigureAwait(false);
                 if (token.IsCancellationRequested || _disposed || _intentionalDisconnect) return;
 
+                // Suppress the Disconnected event fired by tearing down the old
+                // pusher — without this it queues another reconnect on top of this one.
+                _intentionalDisconnect = true;
                 try
                 {
                     if (_pusher != null)
-                    {
                         await _pusher.DisconnectAsync().ConfigureAwait(false);
-                    }
                 }
                 catch { }
+                _intentionalDisconnect = false;
 
+                if (token.IsCancellationRequested || _disposed) return;
                 await EstablishConnection().ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
