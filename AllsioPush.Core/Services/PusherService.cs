@@ -139,11 +139,15 @@ public class PusherService : IDisposable
             }
             if (added) OnChannelsChanged?.Invoke(SubscribedChannels);
 
+            var friendlyName = channelName == _session.PersonalChannel
+                ? (!string.IsNullOrWhiteSpace(_session.DisplayName) ? _session.DisplayName : "Personal")
+                : (_session.PushGroups.FirstOrDefault(g => g.PusherChannel == channelName)?.Name ?? channelName);
+
             channel.Bind("notification", (PusherEvent ev) =>
             {
                 try
                 {
-                    var notification = ParseNotification(ev.Data, channelName);
+                    var notification = ParseNotification(ev.Data, friendlyName);
                     if (notification != null)
                         OnNotificationReceived?.Invoke(notification);
                 }

@@ -24,6 +24,7 @@ public partial class App : Application
     private TrayManager _tray = null!;
     private SingleInstanceService _singleInstance = null!;
     private PusherService? _pusher;
+    private ToneService _toneService = null!;
 
     private Window? _hostWindow;
     private LoginWindow? _loginWindow;
@@ -93,6 +94,7 @@ public partial class App : Application
     {
         SettingsManager.RegisterUriScheme();
         _settings = SettingsManager.Load();
+        _toneService = new ToneService(_settings);
         SettingsManager.SetLaunchOnStartup(_settings.LaunchOnStartup);
 
         _session = CredentialManager.LoadSession();
@@ -110,7 +112,7 @@ public partial class App : Application
         _tray = new TrayManager(_settings);
 
         var presenter = new UiPresenter(_ackService, _windowTracker, _settings, _uiContext);
-        _router = new NotificationRouter(_settings, _uiContext, _toastService, _ackService, _windowTracker, _historyService, presenter);
+        _router = new NotificationRouter(_settings, _uiContext, _toastService, _ackService, _windowTracker, _historyService, presenter, _toneService);
 
         _router.OnEntrySaved += entry =>
             _uiContext.Post(_ => _historyWindow?.AddEntry(entry), null);
@@ -193,6 +195,15 @@ public partial class App : Application
             }
         });
 
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromMinutes(60));
+                await _toneService.RefreshIfStaleAsync();
+            }
+        });
+
         _heartbeatTimer = new System.Threading.Timer(async _ =>
         {
             var current = _session;
@@ -265,6 +276,7 @@ public partial class App : Application
         _pusher.OnSupervisedTransfer += req => _transferService.HandleTransferRequest(req);
         _pusher.OnSupervisedTransferCancelled += id => _transferService.HandleCancellation(id);
         await _pusher.ConnectAsync();
+        _ = _toneService.LoadTonesAsync();
     }
 
     private void ShowLogin()
@@ -389,6 +401,20 @@ public partial class App : Application
             await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             var session = _session;
             if (session == null) return;
+
+            // Refresh groups from the server — channels_updated events are missed
+            // while sleeping, so the local session may have stale PushGroups.
+            try
+            {
+                var refreshed = await _authService.ExchangeToken(session.Token).ConfigureAwait(false);
+                if (refreshed != null)
+                    session.PushGroups = refreshed.PushGroups;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[App] Wake session refresh failed: {ex.Message}");
+            }
+
             _uiContext.Post(_ => _ = ConnectPusher(session), null);
         });
     }
@@ -399,6 +425,7 @@ public partial class App : Application
         try { _heartbeatTimer?.Dispose(); } catch { }
         try { _pruneTimer?.Dispose(); } catch { }
         try { _pusher?.Dispose(); } catch { }
+        try { _toneService?.Dispose(); } catch { }
         try { _tray?.Dispose(); } catch { }
         try { _singleInstance?.Dispose(); } catch { }
         try { _hostWindow?.Close(); } catch { }

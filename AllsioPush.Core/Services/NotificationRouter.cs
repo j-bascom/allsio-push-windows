@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Runtime.InteropServices;
 using AllsioPush.Config;
 using AllsioPush.Models;
 
@@ -14,6 +13,7 @@ public class NotificationRouter
     private readonly WindowTracker _windowTracker;
     private readonly HistoryService _history;
     private readonly INotificationPresenter _presenter;
+    private readonly ToneService _toneService;
 
     public event Action<HistoryEntry>? OnEntrySaved;
 
@@ -24,7 +24,8 @@ public class NotificationRouter
         AckService ackService,
         WindowTracker windowTracker,
         HistoryService history,
-        INotificationPresenter presenter)
+        INotificationPresenter presenter,
+        ToneService toneService)
     {
         _settings = settings;
         _uiContext = uiContext;
@@ -33,6 +34,7 @@ public class NotificationRouter
         _windowTracker = windowTracker;
         _history = history;
         _presenter = presenter;
+        _toneService = toneService;
     }
 
     public void Route(PushNotification notification, bool persistHistory = true)
@@ -49,6 +51,8 @@ public class NotificationRouter
                 _uiContext.Post(_ => _windowTracker.HandleCallEnded(endedCallId!), null);
             return;
         }
+
+        _toneService.PlayNotificationSound(notification.Sound);
 
         var receivedAt = DateTime.UtcNow;
 
@@ -81,7 +85,6 @@ public class NotificationRouter
 
         if (notification.TemplateType == "url_popup")
         {
-            PlayNotificationSound(notification);
             _uiContext.Post(_ => OpenPopupWindow(notification), null);
             return;
         }
@@ -95,7 +98,6 @@ public class NotificationRouter
                 _toastService.Show(notification);
             else
             {
-                PlayNotificationSound(notification);
                 _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
             }
 
@@ -118,12 +120,10 @@ public class NotificationRouter
 
         if (notification.DisplayMode == "popup" || notification.TemplateType == "custom_html")
         {
-            PlayNotificationSound(notification);
             _uiContext.Post(_ => OpenPopupWindow(notification), null);
             return;
         }
 
-        PlayNotificationSound(notification);
         _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
     }
 
@@ -244,43 +244,4 @@ public class NotificationRouter
         }
     }
 
-    private void PlayNotificationSound(PushNotification n)
-    {
-        if (!_settings.SoundEnabled) return;
-        if (string.Equals(n.Sound, "false", StringComparison.OrdinalIgnoreCase)) return;
-        if (string.Equals(n.Sound, "none", StringComparison.OrdinalIgnoreCase)) return;
-
-        // Map sound names to the Windows Media files that match the ms-winsoundevent
-        // URIs used by ToastService.ApplyAudio, so the WinUI window path plays the
-        // same sounds as the WinRT toast path.
-        var fileName = (n.Sound ?? string.Empty).ToLowerInvariant() switch
-        {
-            "alert"    => "Windows Alarm01.wav",
-            "escalate" => "Windows Reminder.wav",
-            "soft"     => "Windows Notify Message.wav",
-            "chime"    => "Windows Notify System Generic.wav",
-            _          => "Windows Notify System Generic.wav",
-        };
-
-        var path = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-            "Media", fileName);
-
-        try
-        {
-            if (File.Exists(path))
-                NativePlaySound(path, IntPtr.Zero, SND_ASYNC | SND_FILENAME | SND_NODEFAULT);
-            else
-                NativePlaySound("SystemNotification", IntPtr.Zero, SND_ASYNC | SND_ALIAS | SND_NODEFAULT);
-        }
-        catch { }
-    }
-
-    [DllImport("winmm.dll", EntryPoint = "PlaySoundW", CharSet = CharSet.Unicode)]
-    private static extern bool NativePlaySound(string? pszSound, IntPtr hmod, uint fdwSound);
-
-    private const uint SND_ASYNC     = 0x0001;
-    private const uint SND_NODEFAULT = 0x0002;
-    private const uint SND_FILENAME  = 0x00020000;
-    private const uint SND_ALIAS     = 0x00010000;
 }

@@ -338,24 +338,10 @@ public class ToastService
 
     private void ApplyAudio(ToastContentBuilder b, PushNotification n)
     {
-        if (!_settings.SoundEnabled
-            || string.Equals(n.Sound, "false", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(n.Sound, "none", StringComparison.OrdinalIgnoreCase))
-        {
-            b.AddAudio(new ToastAudio { Silent = true });
-            return;
-        }
-
-        var src = (n.Sound ?? string.Empty).ToLowerInvariant() switch
-        {
-            "alert" => "ms-winsoundevent:Notification.Looping.Alarm",
-            "soft" => "ms-winsoundevent:Notification.IM",
-            "escalate" => "ms-winsoundevent:Notification.Reminder",
-            "chime" => "ms-winsoundevent:Notification.Default",
-            _ => "ms-winsoundevent:Notification.Default",
-        };
-
-        b.AddAudio(new Uri(src), loop: false, silent: false);
+        // ToneService is the sole sound source — always suppress WinRT toast audio
+        // so notifications don't double-play. The IncomingCall OS sound for
+        // supervised transfers is handled outside ToastService and is unaffected.
+        b.AddAudio(new ToastAudio { Silent = true });
     }
 
     private static string Truncate(string s, int max)
