@@ -109,7 +109,8 @@ public class PopupWindow : WindowEx, IRemoteAckTarget
                 {
                     e.Handled = true;
                     if (!string.IsNullOrEmpty(e.Uri) &&
-                        (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://")))
+                        (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://") ||
+                         e.Uri.StartsWith("tel:")))
                     {
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                         {
@@ -121,7 +122,8 @@ public class PopupWindow : WindowEx, IRemoteAckTarget
                 _webView.CoreWebView2.NavigationStarting += (_, e) =>
                 {
                     if (!_initialLoadComplete) return;
-                    if (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://"))
+                    if (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://") ||
+                        e.Uri.StartsWith("tel:"))
                     {
                         e.Cancel = true;
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo

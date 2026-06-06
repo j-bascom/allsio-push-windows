@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using AllsioPush.Config;
 using AllsioPush.Models;
 
@@ -80,6 +81,7 @@ public class NotificationRouter
 
         if (notification.TemplateType == "url_popup")
         {
+            PlayNotificationSound(notification);
             _uiContext.Post(_ => OpenPopupWindow(notification), null);
             return;
         }
@@ -92,7 +94,10 @@ public class NotificationRouter
             if (_settings.DeferToToast)
                 _toastService.Show(notification);
             else
+            {
+                PlayNotificationSound(notification);
                 _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
+            }
 
             var popData = ExtractScreenPopData(notification);
             if (popData != null
@@ -113,10 +118,12 @@ public class NotificationRouter
 
         if (notification.DisplayMode == "popup" || notification.TemplateType == "custom_html")
         {
+            PlayNotificationSound(notification);
             _uiContext.Post(_ => OpenPopupWindow(notification), null);
             return;
         }
 
+        PlayNotificationSound(notification);
         _uiContext.Post(_ => OpenSlideoutWindow(notification), null);
     }
 
@@ -236,4 +243,27 @@ public class NotificationRouter
             System.Diagnostics.Debug.WriteLine($"[Router] OpenScreenPopWindow failed: {ex.Message}");
         }
     }
+
+    private void PlayNotificationSound(PushNotification n)
+    {
+        if (!_settings.SoundEnabled) return;
+        if (string.Equals(n.Sound, "false", StringComparison.OrdinalIgnoreCase)) return;
+        if (string.Equals(n.Sound, "none", StringComparison.OrdinalIgnoreCase)) return;
+
+        var alias = (n.Sound ?? string.Empty).ToLowerInvariant() switch
+        {
+            "alert" or "escalate" => "SystemExclamation",
+            _ => "SystemNotification",
+        };
+
+        try { NativePlaySound(alias, IntPtr.Zero, SND_ASYNC | SND_ALIAS | SND_NODEFAULT); }
+        catch { }
+    }
+
+    [DllImport("winmm.dll", EntryPoint = "PlaySoundW", CharSet = CharSet.Unicode)]
+    private static extern bool NativePlaySound(string? pszSound, IntPtr hmod, uint fdwSound);
+
+    private const uint SND_ASYNC = 0x0001;
+    private const uint SND_NODEFAULT = 0x0002;
+    private const uint SND_ALIAS = 0x00010000;
 }
