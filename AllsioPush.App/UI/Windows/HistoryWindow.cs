@@ -32,6 +32,7 @@ public class HistoryWindow : WindowEx
     private readonly SynchronizationContext _uiContext;
 
     private readonly ComboBox _filterCombo;
+    private readonly ComboBox _sortCombo;
     private readonly Button _loadServerButton;
     private readonly TextBlock _countLabel;
     private readonly StackPanel _cardList;
@@ -39,6 +40,7 @@ public class HistoryWindow : WindowEx
     private readonly List<HistoryEntry> _entries = new();
     private readonly Dictionary<string, EntryCard> _cardsById = new();
     private string _filter = "All Types";
+    private string _sort = "Newest First";
 
     public HistoryWindow(
         HistoryService history,
@@ -68,6 +70,15 @@ public class HistoryWindow : WindowEx
             _filterCombo.Items.Add(f);
         _filterCombo.SelectedIndex = 0;
 
+        _sortCombo = new ComboBox
+        {
+            Width = 130,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        foreach (var s in new[] { "Newest First", "By Channel" })
+            _sortCombo.Items.Add(s);
+        _sortCombo.SelectedIndex = 0;
+
         var refreshButton = new Button { Content = "Refresh" };
         var clearButton = new Button { Content = "Clear" };
         _loadServerButton = new Button { Content = "Load from server" };
@@ -96,6 +107,7 @@ public class HistoryWindow : WindowEx
         Content = root;
 
         _filterCombo.SelectionChanged += OnFilterChanged;
+        _sortCombo.SelectionChanged += OnSortChanged;
         refreshButton.Click += async (_, _) => await ReloadLocalAsync();
         clearButton.Click += async (_, _) => await ClearAsync();
         _loadServerButton.Click += async (_, _) => await LoadFromServerAsync();
@@ -145,6 +157,7 @@ public class HistoryWindow : WindowEx
         Grid.SetColumn(title, 0);
 
         var rightPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        rightPanel.Children.Add(_sortCombo);
         rightPanel.Children.Add(_filterCombo);
         rightPanel.Children.Add(refresh);
         rightPanel.Children.Add(clear);
@@ -263,20 +276,96 @@ public class HistoryWindow : WindowEx
         Render();
     }
 
+    private void OnSortChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _sort = (_sortCombo.SelectedItem as string) ?? "Newest First";
+        Render();
+    }
+
     private void Render()
     {
         _cardList.Children.Clear();
         _cardsById.Clear();
 
         var filtered = ApplyFilter(_entries);
-        foreach (var entry in filtered)
+        if (_sort == "By Channel")
+            RenderGrouped(filtered);
+        else
+            RenderFlat(filtered);
+        _countLabel.Text = $"{filtered.Count} notification{(filtered.Count == 1 ? "" : "s")}";
+    }
+
+    private void RenderFlat(List<HistoryEntry> entries)
+    {
+        foreach (var entry in entries)
         {
             var card = new EntryCard(entry, OnCardClicked);
             _cardList.Children.Add(card.Root);
             if (!string.IsNullOrEmpty(entry.NotificationId))
                 _cardsById[entry.NotificationId!] = card;
         }
-        _countLabel.Text = $"{filtered.Count} notification{(filtered.Count == 1 ? "" : "s")}";
+    }
+
+    private void RenderGrouped(List<HistoryEntry> entries)
+    {
+        var groups = entries
+            .GroupBy(e => string.IsNullOrWhiteSpace(e.ChannelName) ? null : e.ChannelName)
+            .OrderBy(g => g.Key == null ? 1 : 0)
+            .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in groups)
+        {
+            _cardList.Children.Add(BuildChannelHeader(group.Key ?? "(no channel)", group.Count()));
+            foreach (var entry in group.OrderByDescending(e => e.ReceivedAt))
+            {
+                var card = new EntryCard(entry, OnCardClicked);
+                _cardList.Children.Add(card.Root);
+                if (!string.IsNullOrEmpty(entry.NotificationId))
+                    _cardsById[entry.NotificationId!] = card;
+            }
+        }
+    }
+
+    private static FrameworkElement BuildChannelHeader(string name, int count)
+    {
+        var grid = new Grid { Margin = new Thickness(2, 8, 2, 2) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var label = new TextBlock
+        {
+            Text = name,
+            Foreground = AccentColor,
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        Grid.SetColumn(label, 0);
+
+        var line = new Border
+        {
+            BorderBrush = BorderColorBrush,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(line, 1);
+
+        var countLabel = new TextBlock
+        {
+            Text = count.ToString(),
+            Foreground = TextMuted,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        Grid.SetColumn(countLabel, 2);
+
+        grid.Children.Add(label);
+        grid.Children.Add(line);
+        grid.Children.Add(countLabel);
+        return grid;
     }
 
     private List<HistoryEntry> ApplyFilter(List<HistoryEntry> source)
@@ -380,7 +469,34 @@ public class HistoryWindow : WindowEx
                     FontWeight = FontWeights.Bold,
                 },
             };
-            Grid.SetColumn(badge, 0);
+
+            var badgesPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            badgesPanel.Children.Add(badge);
+            if (!string.IsNullOrWhiteSpace(entry.ChannelName))
+            {
+                var ch = entry.ChannelName.Length > 16 ? entry.ChannelName[..15] + "…" : entry.ChannelName;
+                badgesPanel.Children.Add(new Border
+                {
+                    Background = new SolidColorBrush(ColorHelper.FromArgb(255, 40, 40, 58)),
+                    BorderBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 75, 75, 110)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(3),
+                    Padding = new Thickness(5, 2, 5, 2),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = new TextBlock
+                    {
+                        Text = "#" + ch,
+                        Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 150, 150, 210)),
+                        FontSize = 10,
+                    },
+                });
+            }
+            Grid.SetColumn(badgesPanel, 0);
 
             var title = new TextBlock
             {
@@ -403,7 +519,7 @@ public class HistoryWindow : WindowEx
             };
             Grid.SetColumn(time, 2);
 
-            topRow.Children.Add(badge);
+            topRow.Children.Add(badgesPanel);
             topRow.Children.Add(title);
             topRow.Children.Add(time);
             stack.Children.Add(topRow);
