@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows.Input;
 using AllsioPush.Config;
 using H.NotifyIcon;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace AllsioPush.UI.Tray;
@@ -22,6 +23,7 @@ public class TrayManager : IDisposable
     private MenuFlyoutItem _statusItem = null!;
     private MenuFlyoutSubItem _channelsItem = null!;
     private MenuFlyoutItem _authItem = null!;
+    private MenuFlyoutItem _historyItem = null!;
 
     public event EventHandler? OnOpenSettings;
     public event EventHandler? OnOpenHistory;
@@ -67,10 +69,11 @@ public class TrayManager : IDisposable
             }),
         };
 
-        var history = new MenuFlyoutItem
+        _historyItem = new MenuFlyoutItem
         {
             Text = "Notification History",
             Command = new DelegateCommand(() => OnOpenHistory?.Invoke(this, EventArgs.Empty)),
+            Visibility = Visibility.Collapsed,
         };
         var settings = new MenuFlyoutItem
         {
@@ -91,7 +94,7 @@ public class TrayManager : IDisposable
         menu.Items.Add(_statusItem);
         menu.Items.Add(_channelsItem);
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(history);
+        menu.Items.Add(_historyItem);
         menu.Items.Add(settings);
         menu.Items.Add(updates);
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -117,6 +120,7 @@ public class TrayManager : IDisposable
         if (_disposed) return;
         _signedIn = signedIn;
         _authItem.Text = signedIn ? "Sign Out" : "Sign In";
+        _historyItem.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
         RefreshStatusItem();
     }
 
