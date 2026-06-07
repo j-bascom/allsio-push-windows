@@ -231,7 +231,23 @@ public partial class App : Application
 
         if (_session != null)
         {
-            _ = Task.Run(async () => await ConnectPusher(_session));
+            _ = Task.Run(async () =>
+            {
+                var session = _session;
+                if (session != null && string.IsNullOrEmpty(session.EncryptionKey))
+                {
+                    var refreshed = await _authService.ExchangeToken(session.Token);
+                    if (refreshed != null)
+                    {
+                        session = refreshed;
+                        _session = refreshed;
+                        CredentialManager.SaveSession(session);
+                        System.Diagnostics.Debug.WriteLine(
+                            "[Auth] Session refreshed for encryption key migration");
+                    }
+                }
+                await ConnectPusher(session!);
+            });
         }
         else if (!string.IsNullOrWhiteSpace(startupToken))
         {
