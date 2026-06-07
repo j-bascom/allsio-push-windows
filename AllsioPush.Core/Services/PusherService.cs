@@ -131,20 +131,29 @@ public class PusherService : IDisposable
     private async Task SubscribeChannel(Pusher pusher, string channelName, bool isGroup)
     {
         DebugLog.Write("Pusher", $"Subscribing to {channelName} (isGroup={isGroup})");
+
+        // Guard against concurrent subscribe calls for the same channel (e.g. two rapid
+        // channels_updated events during a rename). Add optimistically before SubscribeAsync
+        // so any concurrent call sees the channel as already tracked and returns early —
+        // preventing duplicate Bind calls that would fire every notification handler twice.
+        bool added;
+        lock (_channelsLock)
+        {
+            added = !_subscribedChannels.Contains(channelName);
+            if (added) _subscribedChannels.Add(channelName);
+        }
+        if (!added)
+        {
+            DebugLog.Write("Pusher", $"Already subscribed (or subscribe in-flight): {channelName}");
+            return;
+        }
+
         try
         {
             var channel = await pusher.SubscribeAsync(channelName).ConfigureAwait(false);
 
-            // SubscribeAsync awaits subscription_succeeded for private channels, so
-            // the channel is confirmed by the time it returns here.
-            bool added;
-            lock (_channelsLock)
-            {
-                added = !_subscribedChannels.Contains(channelName);
-                if (added) _subscribedChannels.Add(channelName);
-            }
             DebugLog.Write("Pusher", $"Subscribed OK: {channelName}");
-            if (added) OnChannelsChanged?.Invoke(SubscribedChannels);
+            OnChannelsChanged?.Invoke(SubscribedChannels);
 
             var friendlyName = channelName == _session.PersonalChannel
                 ? (!string.IsNullOrWhiteSpace(_session.DisplayName) ? _session.DisplayName : "Personal")
@@ -231,6 +240,8 @@ public class PusherService : IDisposable
         }
         catch (Exception ex)
         {
+            // Remove from tracking so the channel can be retried on reconnect.
+            lock (_channelsLock) { _subscribedChannels.Remove(channelName); }
             DebugLog.Write("Pusher", $"Subscribe '{channelName}' FAILED: {ex.Message}");
             System.Diagnostics.Debug.WriteLine($"[Pusher] subscribe '{channelName}' failed: {ex.Message}");
         }
