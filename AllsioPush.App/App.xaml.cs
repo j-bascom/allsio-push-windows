@@ -209,8 +209,16 @@ public partial class App : Application
         {
             var current = _session;
             if (current == null) return;
-            var ok = await _authService.SendHeartbeat(current.Token);
-            if (!ok) _uiContext.Post(_ => ForceSignOut(), null);
+            var (valid, newToken) = await _authService.SendHeartbeat(current.Token);
+            if (!valid)
+                _uiContext.Post(_ => ForceSignOut(), null);
+            else if (newToken != null && newToken != current.Token)
+            {
+                current.Token = newToken;
+                CredentialManager.SaveSession(current);
+                _ackService.SetSession(current);
+                System.Diagnostics.Debug.WriteLine("[Auth] Token rotated successfully");
+            }
         }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
         _pruneTimer = new System.Threading.Timer(_ =>

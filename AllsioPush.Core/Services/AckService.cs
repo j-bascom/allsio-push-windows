@@ -10,7 +10,8 @@ namespace AllsioPush.Services;
 
 public class AckService
 {
-    private readonly HttpClient _http;
+    private readonly HttpClient _http;        // pinned — own API only
+    private readonly HttpClient _webhookHttp; // unpinned — external webhook URLs
     private readonly AppSettings _settings;
     private readonly HistoryService _history;
     private AuthSession? _session;
@@ -21,7 +22,8 @@ public class AckService
     {
         _settings = settings;
         _history = history;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        _http = AuthService.CreatePinnedHttpClient();
+        _webhookHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
     }
 
     public void SetSession(AuthSession? session) => _session = session;
@@ -39,12 +41,14 @@ public class AckService
         {
             try
             {
+                var path = $"/api/notifications/{Uri.EscapeDataString(notificationId)}/ack";
                 var request = new HttpRequestMessage(HttpMethod.Post,
-                    $"{_settings.ApiBase}/api/notifications/{Uri.EscapeDataString(notificationId)}/ack");
+                    $"{_settings.ApiBase}{path}");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 request.Content = new StringContent(
                     JsonSerializer.Serialize(new { buttonLabel, buttonAction }),
                     Encoding.UTF8, "application/json");
+                AuthService.AddSigningHeaders(request, token, "POST", path);
 
                 var response = await _http.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
@@ -68,6 +72,8 @@ public class AckService
         await Acknowledge(notificationId, buttonLabel, "dismiss");
     }
 
+    // FireWebhook posts to an external caller-supplied URL — not our API.
+    // Uses an unpinned client and is intentionally NOT signed.
     public async Task FireWebhook(string webhookUrl, PushNotification payload, string buttonId)
     {
         if (string.IsNullOrWhiteSpace(webhookUrl))
@@ -107,7 +113,7 @@ public class AckService
             request.Content = new StringContent(
                 JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-            var response = await _http.SendAsync(request);
+            var response = await _webhookHttp.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
                 System.Diagnostics.Debug.WriteLine($"[Ack] Webhook failed {response.StatusCode}");
@@ -131,9 +137,11 @@ public class AckService
         if (string.IsNullOrWhiteSpace(token)) return;
         try
         {
+            var path = new Uri(url).AbsolutePath;
             var request = new HttpRequestMessage(HttpMethod.Post, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            AuthService.AddSigningHeaders(request, token, "POST", path);
             var response = await _http.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {

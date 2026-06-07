@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using AllsioPush.Config;
 using AllsioPush.Models;
 using Newtonsoft.Json.Linq;
@@ -154,7 +155,22 @@ public class PusherService : IDisposable
                 DebugLog.Write("Event:notification", $"channel={channelName} data={ev.Data}");
                 try
                 {
-                    var notification = ParseNotification(ev.Data, friendlyName);
+                    string? jsonToParse = ev.Data;
+                    if (!string.IsNullOrWhiteSpace(ev.Data))
+                    {
+                        var rawObj = JObject.Parse(ev.Data);
+                        if (rawObj["encrypted"]?.Value<bool>() == true)
+                        {
+                            jsonToParse = DecryptPayload(rawObj);
+                            if (jsonToParse == null)
+                            {
+                                DebugLog.Write("Pusher", "Dropping encrypted notification — decryption failed");
+                                System.Diagnostics.Debug.WriteLine("[Pusher] Dropping encrypted notification — decryption failed");
+                                return;
+                            }
+                        }
+                    }
+                    var notification = ParseNotification(jsonToParse, friendlyName);
                     if (notification != null)
                         OnNotificationReceived?.Invoke(notification);
                 }
@@ -274,6 +290,32 @@ public class PusherService : IDisposable
     {
         [Newtonsoft.Json.JsonProperty("pushGroups")]
         public List<PushGroup>? PushGroups { get; set; }
+    }
+
+    // Decrypts an AES-256-GCM encrypted Pusher payload.
+    // Payload shape: { encrypted:true, iv:"<b64>", tag:"<b64>", data:"<b64>", v:1 }
+    // Returns the plaintext JSON string, or null if decryption fails.
+    private string? DecryptPayload(JObject raw)
+    {
+        try
+        {
+            var iv = Convert.FromBase64String(raw["iv"]!.Value<string>()!);
+            var tag = Convert.FromBase64String(raw["tag"]!.Value<string>()!);
+            var data = Convert.FromBase64String(raw["data"]!.Value<string>()!);
+
+            if (_session.EncryptionKey == null) return null;
+            var keyBytes = Convert.FromHexString(_session.EncryptionKey);
+
+            using var aes = new AesGcm(keyBytes, 16);
+            var plaintext = new byte[data.Length];
+            aes.Decrypt(iv, data, tag, plaintext);
+            return System.Text.Encoding.UTF8.GetString(plaintext);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Pusher] Decryption failed: {ex.Message}");
+            return null;
+        }
     }
 
     private static PushNotification? ParseNotification(string? data, string channelName)

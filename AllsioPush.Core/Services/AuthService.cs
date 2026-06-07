@@ -1,5 +1,8 @@
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using AllsioPush.Config;
@@ -15,8 +18,7 @@ public class AuthService
     public AuthService(AppSettings settings)
     {
         _settings = settings;
-        _http = new HttpClient();
-        _http.Timeout = TimeSpan.FromSeconds(15);
+        _http = CreatePinnedHttpClient();
     }
 
     public async Task<AuthSession?> ExchangeToken(string token)
@@ -29,6 +31,7 @@ public class AuthService
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new { deviceType = "windows_app" }),
                 Encoding.UTF8, "application/json");
+            AddSigningHeaders(request, token, "POST", "/api/extension/exchange");
 
             var response = await _http.SendAsync(request);
             if (!response.IsSuccessStatusCode)
@@ -53,6 +56,7 @@ public class AuthService
                 SessionId = data.TryGetProperty("sessionId", out var sid) ? sid.GetString() ?? "" : "",
                 PersonalChannel = data.TryGetProperty("personalChannel", out var pc) ? pc.GetString() ?? "" : "",
                 PushGroups = ParsePushGroups(data),
+                EncryptionKey = data.TryGetProperty("encryptionKey", out var ek) ? ek.GetString() : null,
             };
         }
         catch (Exception ex)
@@ -76,7 +80,7 @@ public class AuthService
         };
     }
 
-    public async Task<bool> SendHeartbeat(string token)
+    public async Task<(bool valid, string? newToken)> SendHeartbeat(string token)
     {
         try
         {
@@ -86,13 +90,28 @@ public class AuthService
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new { deviceType = "windows_app" }),
                 Encoding.UTF8, "application/json");
+            AddSigningHeaders(request, token, "POST", "/api/extension/heartbeat");
 
             var response = await _http.SendAsync(request);
-            return response.StatusCode != System.Net.HttpStatusCode.Unauthorized;
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                return (false, null);
+
+            try
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                var data = JsonSerializer.Deserialize<JsonElement>(json);
+                var newToken = data.TryGetProperty("newToken", out var nt) ? nt.GetString() : null;
+                return (true, newToken);
+            }
+            catch
+            {
+                return (true, null);
+            }
         }
         catch
         {
-            return true;
+            return (true, null);
         }
     }
 
@@ -103,6 +122,7 @@ public class AuthService
             var request = new HttpRequestMessage(HttpMethod.Post,
                 $"{_settings.ApiBase}/api/extension/logout");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            AddSigningHeaders(request, token, "POST", "/api/extension/logout");
             await _http.SendAsync(request);
         }
         catch { }
@@ -123,5 +143,58 @@ public class AuthService
             }
         }
         return groups;
+    }
+
+    // HMAC-SHA256 signing: message = "{timestamp}.{METHOD}.{path}"
+    internal static void AddSigningHeaders(HttpRequestMessage request, string token, string method, string path)
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        var message = $"{timestamp}.{method.ToUpper()}.{path}";
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(token));
+        var sig = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
+        var sigHex = Convert.ToHexString(sig).ToLower();
+        request.Headers.TryAddWithoutValidation("X-Allsio-Timestamp", timestamp);
+        request.Headers.TryAddWithoutValidation("X-Allsio-Signature", sigHex);
+    }
+
+    // Pinned HttpClient — validates that the TLS chain contains ISRG Root X1.
+    // DEBUG builds skip pinning so dev servers with different certs still work.
+    internal static HttpClient CreatePinnedHttpClient()
+    {
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = ValidateServerCertificate,
+        };
+        return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+    }
+
+    private static bool ValidateServerCertificate(
+        HttpRequestMessage request,
+        X509Certificate2? cert,
+        X509Chain? chain,
+        SslPolicyErrors errors)
+    {
+#if DEBUG
+        return errors == SslPolicyErrors.None;
+#else
+        if (errors != SslPolicyErrors.None) return false;
+        if (chain == null) return false;
+
+        const string isrgThumbprint =
+            "96BCEC06264976F374607779ACF28C5A7" +
+            "CFE8A3C0AAE11A8FFCEE05C0BDDF08C6";
+
+        foreach (var element in chain.ChainElements)
+        {
+            var thumbprint = element.Certificate
+                .GetCertHashString(HashAlgorithmName.SHA256)
+                .ToUpper();
+            if (thumbprint == isrgThumbprint) return true;
+        }
+
+        System.Diagnostics.Debug.WriteLine(
+            "[TLS] Certificate chain does not contain ISRG Root X1 — connection rejected");
+        return false;
+#endif
     }
 }

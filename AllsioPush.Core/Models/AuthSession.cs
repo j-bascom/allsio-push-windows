@@ -12,6 +12,7 @@ public class AuthSession
     public string SessionId { get; set; } = string.Empty;
     public string PersonalChannel { get; set; } = string.Empty;
     public List<PushGroup> PushGroups { get; set; } = new();
+    public string? EncryptionKey { get; set; }
 }
 
 public class PushGroup
