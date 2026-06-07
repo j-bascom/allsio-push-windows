@@ -176,26 +176,49 @@ public class AuthService
         X509Chain? chain,
         SslPolicyErrors errors)
     {
+        DebugLog.Write("TLS", $"Validating cert for: {request.RequestUri?.Host}");
+        DebugLog.Write("TLS", $"SslPolicyErrors: {errors}");
+
+        if (errors != SslPolicyErrors.None)
+        {
+            DebugLog.Write("TLS", "Policy errors — rejecting");
+            return false;
+        }
+
+        if (chain == null)
+        {
+            DebugLog.Write("TLS", "No chain — rejecting");
+            return false;
+        }
+
+        DebugLog.Write("TLS", $"Chain has {chain.ChainElements.Count} elements:");
+        foreach (var element in chain.ChainElements)
+        {
+            var thumbprint = element.Certificate
+                .GetCertHashString(HashAlgorithmName.SHA256).ToUpper();
+            DebugLog.Write("TLS", $"  {element.Certificate.Subject} → {thumbprint}");
+        }
+
 #if DEBUG
+        DebugLog.Write("TLS", "DEBUG build — skipping pin check");
         return errors == SslPolicyErrors.None;
 #else
-        if (errors != SslPolicyErrors.None) return false;
-        if (chain == null) return false;
-
         const string isrgThumbprint =
-            "96BCEC06264976F374607779ACF28C5A7" +
+            "96BCEC06264976F37460779ACF28C5A7" +
             "CFE8A3C0AAE11A8FFCEE05C0BDDF08C6";
 
         foreach (var element in chain.ChainElements)
         {
             var thumbprint = element.Certificate
-                .GetCertHashString(HashAlgorithmName.SHA256)
-                .ToUpper();
-            if (thumbprint == isrgThumbprint) return true;
+                .GetCertHashString(HashAlgorithmName.SHA256).ToUpper();
+            if (thumbprint == isrgThumbprint)
+            {
+                DebugLog.Write("TLS", "ISRG Root X1 found — accepting");
+                return true;
+            }
         }
 
-        System.Diagnostics.Debug.WriteLine(
-            "[TLS] Certificate chain does not contain ISRG Root X1 — connection rejected");
+        DebugLog.Write("TLS", "ISRG Root X1 NOT found — rejecting");
         return false;
 #endif
     }
