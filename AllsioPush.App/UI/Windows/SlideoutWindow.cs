@@ -1,6 +1,9 @@
+using System.Text;
+using AllsioPush.Config;
 using AllsioPush.Models;
 using AllsioPush.Services;
 using Microsoft.UI;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -21,6 +24,8 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private readonly WindowTracker _tracker;
 
     private readonly int _width;
+    private readonly bool _isHtmlContent;
+    private WebView2? _webView;
     private readonly StackPanel _actionsPanel;
     private readonly ProgressBar _ttlBar;
     private Button? _ackButton;
@@ -59,6 +64,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         _ackService = ackService;
         _tracker = tracker;
         _width = Math.Max(280, notification.PopupWidth ?? 380);
+        _isHtmlContent = notification.TemplateType == "custom_html";
 
         Title = "Allsio Push";
         ConfigurePresenter();
@@ -102,13 +108,14 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         root.PointerExited += (_, _) => _ttlPaused = false;
         Content = root;
 
-        root.Loaded += (_, _) =>
+        root.Loaded += async (_, _) =>
         {
             _tracker.Register(this);
             // Start the countdown first so the TTL bar is visible and its height is
             // included when we measure — otherwise it overflows and clips the buttons.
             if ((notification.Ttl ?? 0) > 0) StartTtlCountdown(notification.Ttl!.Value);
             SizeAndPosition(root);
+            if (_webView != null) await InitializeWebViewAsync();
         };
         Closed += (_, _) =>
         {
@@ -131,7 +138,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
         var work = DisplayArea.Primary.WorkArea;
         AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
-        InitLayeredAlpha();
+        if (!_isHtmlContent) InitLayeredAlpha();
     }
 
     private void InitLayeredAlpha()
@@ -155,11 +162,21 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
 
     private void SizeAndPosition(FrameworkElement root)
     {
-        root.Measure(new global::Windows.Foundation.Size(_width, double.PositiveInfinity));
-        var h = Math.Clamp(root.DesiredSize.Height, 120, 480);
+        double h;
+        if (_isHtmlContent)
+        {
+            // WebView2 is a child HWND — it doesn't participate in WinUI Measure.
+            // Use the payload's popupHeight or a sensible default.
+            h = _notification.PopupHeight ?? 300;
+        }
+        else
+        {
+            root.Measure(new global::Windows.Foundation.Size(_width, double.PositiveInfinity));
+            h = Math.Clamp(root.DesiredSize.Height, 120, 480);
+        }
         var dpi = this.GetDpiForWindow() / 96.0;
         _pixelWidth = (int)Math.Ceiling(_width * dpi);
-        _pixelHeight = (int)Math.Ceiling(h * dpi) + 2; // +2px prevents arrange-pass rounding from clipping the last row
+        _pixelHeight = (int)Math.Ceiling(h * dpi) + 2;
         AppWindow.Resize(new SizeInt32(_pixelWidth, _pixelHeight));
         AddToStack();
     }
@@ -242,13 +259,13 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             var t = Math.Min(1.0, (double)elapsed / SlideInMs);
             var eased = 1.0 - (1.0 - t) * (1.0 - t);
             var x = (int)(startX + (_slideTarget.X - startX) * eased);
-            SetWindowOpacity((byte)(t * t * t * 255));
+            if (!_isHtmlContent) SetWindowOpacity((byte)(t * t * t * 255));
             try { AppWindow.Move(new PointInt32(x, _slideTarget.Y)); } catch { }
             if (t >= 1.0)
             {
                 _slideInComplete = true;
                 _slideTimer?.Stop();
-                EnsureOpaque();
+                if (!_isHtmlContent) EnsureOpaque();
             }
         };
         _slideTimer.Start();
@@ -338,6 +355,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     {
         "caller_card" => BuildCallerCardContent(),
         "appointment_alert" => BuildAppointmentContent(),
+        "custom_html" => BuildHtmlContent(),
         _ => BuildPlainContent(),
     };
 
@@ -347,6 +365,77 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         TextWrapping = TextWrapping.Wrap,
         FontSize = 13,
     };
+
+    private FrameworkElement BuildHtmlContent()
+    {
+        _webView = new WebView2
+        {
+            MinHeight = 120,
+            Height = _notification.PopupHeight ?? 300,
+        };
+        return _webView;
+    }
+
+    private async Task InitializeWebViewAsync()
+    {
+        if (_webView == null) return;
+        try
+        {
+            var userDataFolder = Path.Combine(SettingsManager.GetAppDataPath(), "WebView2");
+            Directory.CreateDirectory(userDataFolder);
+            var env = await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, userDataFolder, new CoreWebView2EnvironmentOptions());
+            await _webView.EnsureCoreWebView2Async(env);
+
+            _webView.CoreWebView2.NewWindowRequested += (_, e) =>
+            {
+                e.Handled = true;
+                if (!string.IsNullOrEmpty(e.Uri) &&
+                    (e.Uri.StartsWith("https://") || e.Uri.StartsWith("http://") || e.Uri.StartsWith("tel:")))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = e.Uri,
+                        UseShellExecute = true,
+                    });
+                }
+            };
+
+            _webView.CoreWebView2.NavigateToString(RenderCustomHtml());
+        }
+        catch (Exception ex)
+        {
+            DebugLog.Write("Slideout", $"WebView2 init failed: {ex.Message}");
+        }
+    }
+
+    private string RenderCustomHtml()
+    {
+        var template = _notification.CustomHtml ?? _notification.Content ?? string.Empty;
+        var sb = new StringBuilder(template);
+        var tokens = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["title"] = _notification.Title,
+            ["content"] = _notification.Content,
+            ["channel"] = _notification.ChannelName,
+            ["channelName"] = _notification.ChannelName,
+            ["group"] = _notification.GroupName,
+            ["groupName"] = _notification.GroupName,
+            ["timestamp"] = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            ["callerName"] = _notification.CallerName,
+            ["callerPhone"] = _notification.CallerPhone,
+            ["reason"] = _notification.Reason,
+            ["appointmentDate"] = _notification.AppointmentDate,
+            ["service"] = _notification.Service,
+            ["stylist"] = _notification.Stylist,
+            ["senderName"] = _notification.SenderName,
+            ["senderPhone"] = _notification.SenderPhone,
+            ["url"] = _notification.Url,
+        };
+        foreach (var kv in tokens)
+            sb.Replace("{{" + kv.Key + "}}", kv.Value ?? string.Empty);
+        return sb.ToString();
+    }
 
     private FrameworkElement BuildCallerCardContent()
     {

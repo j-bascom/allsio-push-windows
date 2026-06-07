@@ -124,8 +124,7 @@ public partial class App : Application
         _toastService.RegisterActivationHandler(notification =>
         {
             var copy = notification;
-            if (copy.DisplayMode == "popup" || copy.TemplateType == "custom_html"
-                || copy.TemplateType == "url_popup")
+            if (copy.DisplayMode == "popup" || copy.TemplateType == "url_popup")
             {
                 _uiContext.Post(_ => presenter.ShowPopup(copy), null);
             }

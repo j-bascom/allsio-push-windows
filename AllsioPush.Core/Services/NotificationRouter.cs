@@ -122,7 +122,7 @@ public class NotificationRouter
             return;
         }
 
-        if (notification.DisplayMode == "popup" || notification.TemplateType == "custom_html")
+        if (notification.DisplayMode == "popup")
         {
             _uiContext.Post(_ => OpenPopupWindow(notification), null);
             return;
