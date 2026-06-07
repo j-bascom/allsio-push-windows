@@ -4,6 +4,7 @@ using AllsioPush.Models;
 using AllsioPush.Services;
 using Microsoft.UI;
 using Microsoft.Web.WebView2.Core;
+using Windows.Foundation;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -29,6 +30,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private readonly StackPanel _actionsPanel;
     private readonly Grid _ttlBar;
     private Border _ttlFill = null!;
+    private ScaleTransform _ttlFillScale = null!;
     private Button? _ackButton;
     private Button _copyButton = null!;
 
@@ -70,11 +72,14 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         Title = "Allsio Push";
         ConfigurePresenter();
 
+        _ttlFillScale = new ScaleTransform { ScaleX = 1.0 };
         _ttlFill = new Border
         {
-            Background = new SolidColorBrush(ColorHelper.FromArgb(255, 99, 102, 241)),
-            HorizontalAlignment = HorizontalAlignment.Left,
+            Background = GreenBrush,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
+            RenderTransformOrigin = new Point(0, 0.5),
+            RenderTransform = _ttlFillScale,
         };
         _ttlBar = new Grid
         {
@@ -117,8 +122,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         root.Loaded += async (_, _) =>
         {
             _tracker.Register(this);
-            // Start the countdown first so the TTL bar is visible and its height is
-            // included when we measure — otherwise it overflows and clips the buttons.
+            DebugLog.Write("Slideout", $"Loaded ttl={notification.Ttl} ttlBarVisibility={_ttlBar.Visibility}");
             if ((notification.Ttl ?? 0) > 0) StartTtlCountdown(notification.Ttl!.Value);
             SizeAndPosition(root);
             if (_webView != null) await InitializeWebViewAsync();
@@ -595,6 +599,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     {
         _ttlTotalMs = seconds * 1000;
         _ttlElapsedMs = 0;
+        DebugLog.Write("Slideout", $"StartTtlCountdown seconds={seconds}");
         _ttlTimer = DispatcherQueue.CreateTimer();
         _ttlTimer.Interval = TimeSpan.FromMilliseconds(50);
         _ttlTimer.Tick += (_, _) =>
@@ -602,7 +607,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             if (_closing || _ttlPaused) return;
             _ttlElapsedMs += 50;
             var remaining = Math.Max(0, _ttlTotalMs - _ttlElapsedMs);
-            _ttlFill.Width = _ttlBar.ActualWidth * remaining / _ttlTotalMs;
+            _ttlFillScale.ScaleX = (double)remaining / _ttlTotalMs;
             if (remaining <= 0)
             {
                 _ttlTimer!.Stop();
