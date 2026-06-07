@@ -75,7 +75,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             Maximum = 1000,
             Value = 1000,
             Height = 3,
-            Visibility = Visibility.Collapsed,
+            Visibility = (notification.Ttl ?? 0) > 0 ? Visibility.Visible : Visibility.Collapsed,
             Margin = new Thickness(0, 8, 0, 0),
         };
 
@@ -588,7 +588,6 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private void StartTtlCountdown(int seconds)
     {
         _ttlTotalMs = seconds * 1000;
-        _ttlBar.Visibility = Visibility.Visible;
         _ttlElapsedMs = 0;
         _ttlTimer = DispatcherQueue.CreateTimer();
         _ttlTimer.Interval = TimeSpan.FromMilliseconds(50);
