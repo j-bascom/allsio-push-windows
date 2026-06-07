@@ -27,7 +27,8 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private readonly bool _isHtmlContent;
     private WebView2? _webView;
     private readonly StackPanel _actionsPanel;
-    private readonly ProgressBar _ttlBar;
+    private readonly Grid _ttlBar;
+    private Border _ttlFill = null!;
     private Button? _ackButton;
     private Button _copyButton = null!;
 
@@ -69,15 +70,20 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         Title = "Allsio Push";
         ConfigurePresenter();
 
-        _ttlBar = new ProgressBar
+        _ttlFill = new Border
         {
-            Minimum = 0,
-            Maximum = 1000,
-            Value = 1000,
-            Height = 3,
-            Visibility = (notification.Ttl ?? 0) > 0 ? Visibility.Visible : Visibility.Collapsed,
-            Margin = new Thickness(0, 8, 0, 0),
+            Background = new SolidColorBrush(ColorHelper.FromArgb(255, 99, 102, 241)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Stretch,
         };
+        _ttlBar = new Grid
+        {
+            Height = 4,
+            Background = new SolidColorBrush(ColorHelper.FromArgb(255, 55, 55, 55)),
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = (notification.Ttl ?? 0) > 0 ? Visibility.Visible : Visibility.Collapsed,
+        };
+        _ttlBar.Children.Add(_ttlFill);
 
         _actionsPanel = new StackPanel
         {
@@ -596,7 +602,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             if (_closing || _ttlPaused) return;
             _ttlElapsedMs += 50;
             var remaining = Math.Max(0, _ttlTotalMs - _ttlElapsedMs);
-            _ttlBar.Value = (double)remaining / _ttlTotalMs * 1000;
+            _ttlFill.Width = _ttlBar.ActualWidth * remaining / _ttlTotalMs;
             if (remaining <= 0)
             {
                 _ttlTimer!.Stop();
