@@ -46,7 +46,9 @@ public class AuthService
 
             return new AuthSession
             {
-                Token = token,
+                Token = data.TryGetProperty("token", out var rt) && !string.IsNullOrEmpty(rt.GetString())
+                    ? rt.GetString()!
+                    : token,
                 UserId = GetStringFlexible(data, "userId"),
                 TenantId = data.GetProperty("tenantId").GetString() ?? "",
                 DisplayName = data.GetProperty("displayName").GetString() ?? "",
