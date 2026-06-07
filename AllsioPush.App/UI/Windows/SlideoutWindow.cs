@@ -73,9 +73,9 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         _ttlFill = new Border { Background = GreenBrush };
         _ttlBar = new Grid
         {
-            Height = 4,
+            Height = 10,
+            Margin = new Thickness(0, 2, 0, 0),
             Background = new SolidColorBrush(ColorHelper.FromArgb(255, 55, 55, 55)),
-            Margin = new Thickness(0, 8, 0, 0),
             Visibility = (notification.Ttl ?? 0) > 0 ? Visibility.Visible : Visibility.Collapsed,
         };
         // Col 0 = green fill (shrinks), Col 1 = dark track remainder (grows)
@@ -96,7 +96,6 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         stack.Children.Add(BuildHeader());
         stack.Children.Add(BuildContent());
         stack.Children.Add(_actionsPanel);
-        stack.Children.Add(_ttlBar);
 
         var card = new Border
         {
@@ -108,7 +107,12 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         };
 
         var root = new Grid { RequestedTheme = ElementTheme.Dark };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(card, 0);
+        Grid.SetRow(_ttlBar, 1);
         root.Children.Add(card);
+        root.Children.Add(_ttlBar);
         root.PointerEntered += (_, _) => _ttlPaused = true;
         root.PointerExited += (_, _) => _ttlPaused = false;
         Content = root;
