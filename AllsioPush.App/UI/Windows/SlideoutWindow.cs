@@ -4,7 +4,6 @@ using AllsioPush.Models;
 using AllsioPush.Services;
 using Microsoft.UI;
 using Microsoft.Web.WebView2.Core;
-using Windows.Foundation;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -30,7 +29,6 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private readonly StackPanel _actionsPanel;
     private readonly Grid _ttlBar;
     private Border _ttlFill = null!;
-    private ScaleTransform _ttlFillScale = null!;
     private Button? _ackButton;
     private Button _copyButton = null!;
 
@@ -72,15 +70,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         Title = "Allsio Push";
         ConfigurePresenter();
 
-        _ttlFillScale = new ScaleTransform { ScaleX = 1.0 };
-        _ttlFill = new Border
-        {
-            Background = GreenBrush,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            RenderTransformOrigin = new Point(0, 0.5),
-            RenderTransform = _ttlFillScale,
-        };
+        _ttlFill = new Border { Background = GreenBrush };
         _ttlBar = new Grid
         {
             Height = 4,
@@ -88,6 +78,10 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             Margin = new Thickness(0, 8, 0, 0),
             Visibility = (notification.Ttl ?? 0) > 0 ? Visibility.Visible : Visibility.Collapsed,
         };
+        // Col 0 = green fill (shrinks), Col 1 = dark track remainder (grows)
+        _ttlBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _ttlBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0, GridUnitType.Star) });
+        Grid.SetColumn(_ttlFill, 0);
         _ttlBar.Children.Add(_ttlFill);
 
         _actionsPanel = new StackPanel
@@ -607,7 +601,9 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             if (_closing || _ttlPaused) return;
             _ttlElapsedMs += 50;
             var remaining = Math.Max(0, _ttlTotalMs - _ttlElapsedMs);
-            _ttlFillScale.ScaleX = (double)remaining / _ttlTotalMs;
+            var progress = (double)remaining / _ttlTotalMs;
+            _ttlBar.ColumnDefinitions[0].Width = new GridLength(progress, GridUnitType.Star);
+            _ttlBar.ColumnDefinitions[1].Width = new GridLength(1.0 - progress, GridUnitType.Star);
             if (remaining <= 0)
             {
                 _ttlTimer!.Stop();
