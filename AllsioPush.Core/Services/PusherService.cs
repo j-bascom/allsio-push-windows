@@ -11,6 +11,7 @@ public class PusherService : IDisposable
 {
     private readonly AuthSession _session;
     private readonly AppSettings _settings;
+    private readonly HttpClient _authHttp = AuthService.CreatePinnedHttpClient();
     private Pusher? _pusher;
     private System.Threading.Timer? _keepaliveTimer;
     private CancellationTokenSource? _reconnectCts;
@@ -90,11 +91,10 @@ public class PusherService : IDisposable
         lock (_channelsLock) { _subscribedChannels.Clear(); }
         OnChannelsChanged?.Invoke(SubscribedChannels);
 
-        var authorizer = new HttpAuthorizer($"{_settings.ApiBase}/api/pusher/auth")
-        {
-            AuthenticationHeader = new AuthenticationHeaderValue("Bearer", _session.Token),
-            Timeout = TimeSpan.FromSeconds(15),
-        };
+        var authorizer = new SignedPusherAuthorizer(
+            authEndpoint: $"{_settings.ApiBase}/api/pusher/auth",
+            getToken: () => _session.Token,
+            pinnedHttpClient: _authHttp);
 
         var options = new PusherOptions
         {
@@ -612,5 +612,6 @@ public class PusherService : IDisposable
         }
 
         _reconnectCts?.Dispose();
+        _authHttp.Dispose();
     }
 }
