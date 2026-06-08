@@ -248,6 +248,34 @@ public class PopupWindow : WindowEx, IRemoteAckTarget
                     };
                     break;
                 }
+                case "url":
+                {
+                    var captured = btn;
+                    button.Click += async (_, _) =>
+                    {
+                        button.IsEnabled = false;
+                        if (!string.IsNullOrWhiteSpace(captured.Url))
+                        {
+                            try
+                            {
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                                {
+                                    FileName = captured.Url,
+                                    UseShellExecute = true,
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[Popup] Failed to open URL: {ex.Message}");
+                            }
+                        }
+                        await _ackService.Acknowledge(_notification.NotificationId, label, "url");
+                        button.Foreground = GreenBrush;
+                        await Task.Delay(1200);
+                        Close();
+                    };
+                    break;
+                }
                 default:
                     button.Click += async (_, _) =>
                     {

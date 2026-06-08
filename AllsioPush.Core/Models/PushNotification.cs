@@ -55,4 +55,5 @@ public class NotificationButton
     public string Action { get; set; } = string.Empty;
     public string Style { get; set; } = "default";
     public string? WebhookUrl { get; set; }
+    public string? Url { get; set; }
 }

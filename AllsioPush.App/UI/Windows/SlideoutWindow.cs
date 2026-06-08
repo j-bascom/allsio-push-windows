@@ -549,6 +549,33 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
                     };
                     break;
                 }
+                case "url":
+                {
+                    var captured = btn;
+                    button.Click += async (_, _) =>
+                    {
+                        button.IsEnabled = false;
+                        if (!string.IsNullOrWhiteSpace(captured.Url))
+                        {
+                            try
+                            {
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                                {
+                                    FileName = captured.Url,
+                                    UseShellExecute = true,
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[Slideout] Failed to open URL: {ex.Message}");
+                            }
+                        }
+                        await _ackService.Acknowledge(_notification.NotificationId, label, "url");
+                        button.Foreground = GreenBrush;
+                        CloseAfter(1200);
+                    };
+                    break;
+                }
                 default:
                     button.Click += async (_, _) =>
                     {

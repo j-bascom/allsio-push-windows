@@ -435,10 +435,11 @@ public class PusherService : IDisposable
             {
                 n.Buttons.Add(new NotificationButton
                 {
-                    Label = (string?)b["label"] ?? "",
-                    Action = (string?)b["action"] ?? "",
-                    Style = (string?)b["style"] ?? "default",
+                    Label      = (string?)b["label"] ?? "",
+                    Action     = (string?)b["action"] ?? "",
+                    Style      = (string?)b["style"] ?? "default",
                     WebhookUrl = (string?)b["webhookUrl"] ?? (string?)b["webhook_url"],
+                    Url        = (string?)b["url"],
                 });
             }
         }
