@@ -559,16 +559,19 @@ public class PusherService : IDisposable
                 await Task.Delay(delay, token).ConfigureAwait(false);
                 if (token.IsCancellationRequested || _disposed || _intentionalDisconnect) return;
 
-                // Suppress the Disconnected event fired by tearing down the old
-                // pusher — without this it queues another reconnect on top of this one.
-                _intentionalDisconnect = true;
-                try
+                // Unsubscribe from the old pusher BEFORE disconnecting.
+                // DisconnectAsync fires the Disconnected event asynchronously after
+                // returning; if we only relied on _intentionalDisconnect the flag
+                // would already be reset by then, causing a spurious ScheduleReconnect
+                // that produces the 2-second flap loop after wake-from-sleep.
+                var oldPusher = _pusher;
+                if (oldPusher != null)
                 {
-                    if (_pusher != null)
-                        await _pusher.DisconnectAsync().ConfigureAwait(false);
+                    oldPusher.ConnectionStateChanged -= HandleConnectionStateChanged;
+                    oldPusher.Error -= HandleError;
+                    try { await oldPusher.DisconnectAsync().ConfigureAwait(false); }
+                    catch { }
                 }
-                catch { }
-                _intentionalDisconnect = false;
 
                 if (token.IsCancellationRequested || _disposed) return;
                 await EstablishConnection().ConfigureAwait(false);
@@ -576,7 +579,7 @@ public class PusherService : IDisposable
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[Pusher] reconnect failed: {ex.Message}");
+                DebugLog.Write("Pusher", $"reconnect failed: {ex.Message}");
                 ScheduleReconnect();
             }
         }, token);
