@@ -170,17 +170,22 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
 
     private void SizeAndPosition(FrameworkElement root)
     {
+        root.Measure(new global::Windows.Foundation.Size(_width, double.PositiveInfinity));
+        double measured = root.DesiredSize.Height;
+
         double h;
         if (_isHtmlContent)
         {
-            // WebView2 is a child HWND — it doesn't participate in WinUI Measure.
-            // Use the payload's popupHeight or a sensible default.
-            h = _notification.PopupHeight ?? 300;
+            var htmlH = (double)(_notification.PopupHeight ?? 300);
+            // WebView2 may report 0 from Measure before CoreWebView2 is initialised
+            // (it's a child HWND). If measured height doesn't already include the
+            // HTML area, add it explicitly so the header + actionsPanel + HTML all fit.
+            h = measured < htmlH ? measured + htmlH : measured;
+            h = Math.Clamp(h, 160, 900);
         }
         else
         {
-            root.Measure(new global::Windows.Foundation.Size(_width, double.PositiveInfinity));
-            h = Math.Clamp(root.DesiredSize.Height, 120, 480);
+            h = Math.Clamp(measured, 120, 480);
         }
         var dpi = this.GetDpiForWindow() / 96.0;
         _pixelWidth = (int)Math.Ceiling(_width * dpi);
