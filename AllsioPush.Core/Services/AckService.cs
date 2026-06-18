@@ -22,7 +22,7 @@ public class AckService
     {
         _settings = settings;
         _history = history;
-        _http = AuthService.CreatePinnedHttpClient();
+        _http = AuthService.CreatePinnedHttpClient(_settings.Environment == ServerEnvironment.Development);
         _webhookHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
     }
 

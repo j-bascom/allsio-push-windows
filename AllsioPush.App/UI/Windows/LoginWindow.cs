@@ -90,6 +90,7 @@ public class LoginWindow : WindowEx
             await _webView.EnsureCoreWebView2Async(env);
 
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
+            _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
             _webView.CoreWebView2.NewWindowRequested += (s, e) =>
             {
                 if (e.Uri.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
@@ -119,7 +120,9 @@ public class LoginWindow : WindowEx
     private async Task NavigateToLoginAsync()
     {
         await ClearWebSessionAsync();
-        _webView.CoreWebView2.Navigate(BuildLoginUrl());
+        var url = BuildLoginUrl();
+        DebugLog.Write("Login", $"Navigating to sign-in page: {url}");
+        _webView.CoreWebView2.Navigate(url);
     }
 
     private async Task ClearWebSessionAsync()
@@ -141,9 +144,22 @@ public class LoginWindow : WindowEx
         if (string.IsNullOrEmpty(e.Uri)) return;
         if (e.Uri.StartsWith("allsio-push://", StringComparison.OrdinalIgnoreCase))
         {
+            DebugLog.Write("Login", "Auth redirect intercepted (navigation)");
             e.Cancel = true;
             _ = HandleAuthRedirect(e.Uri);
+            return;
         }
+        DebugLog.Write("Login", $"Navigation starting: {e.Uri}");
+    }
+
+    private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        // Logs the sign-in page's real HTTP status — a 403 served by the
+        // extension-login page still "completes" (IsSuccess=true), so the
+        // status code is the only signal that the page itself was forbidden.
+        var url = _webView.CoreWebView2?.Source;
+        DebugLog.Write("Login",
+            $"Navigation completed: url={url} http={e.HttpStatusCode} success={e.IsSuccess} webError={e.WebErrorStatus}");
     }
 
     private async Task HandleAuthRedirect(string uri)
@@ -155,10 +171,12 @@ public class LoginWindow : WindowEx
             var token = ParseQueryParam(new Uri(uri).Query, "token");
             if (string.IsNullOrWhiteSpace(token))
             {
+                DebugLog.Write("Login", "Auth redirect contained no token");
                 ShowError("Sign-in did not return a token. Please try again.");
                 return;
             }
 
+            DebugLog.Write("Login", $"Token received (len={token.Length}) — exchanging…");
             _webView.Visibility = Visibility.Collapsed;
             _statusText.Text = "Signing in…";
             _statusPanel.Visibility = Visibility.Visible;
@@ -166,9 +184,11 @@ public class LoginWindow : WindowEx
             var session = await _authService.ExchangeToken(token);
             if (session == null)
             {
+                DebugLog.Write("Login", "Token exchange returned no session — see [Auth] log above for status/body");
                 ShowError("Sign-in failed. Please try again.");
                 return;
             }
+            DebugLog.Write("Login", $"Sign-in succeeded — user={session.DisplayName}");
             OnLoginSuccess?.Invoke(session);
         }
         catch (Exception ex)
@@ -183,6 +203,7 @@ public class LoginWindow : WindowEx
 
     private void ShowError(string message)
     {
+        DebugLog.Write("Login", $"Showing error: {message.Replace('\n', ' ')}");
         DispatcherQueue.TryEnqueue(() =>
         {
             _webView.Visibility = Visibility.Collapsed;

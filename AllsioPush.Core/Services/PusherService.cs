@@ -11,7 +11,7 @@ public class PusherService : IDisposable
 {
     private readonly AuthSession _session;
     private readonly AppSettings _settings;
-    private readonly HttpClient _authHttp = AuthService.CreatePinnedHttpClient();
+    private readonly HttpClient _authHttp;
     private Pusher? _pusher;
     private System.Threading.Timer? _keepaliveTimer;
     private CancellationTokenSource? _reconnectCts;
@@ -39,6 +39,7 @@ public class PusherService : IDisposable
     {
         _session = session;
         _settings = settings;
+        _authHttp = AuthService.CreatePinnedHttpClient(_settings.Environment == ServerEnvironment.Development);
     }
 
     public async Task ConnectAsync()

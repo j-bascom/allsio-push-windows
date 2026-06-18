@@ -18,13 +18,14 @@ public class AuthService
     public AuthService(AppSettings settings)
     {
         _settings = settings;
-        _http = CreatePinnedHttpClient();
+        _http = CreatePinnedHttpClient(_settings.Environment == ServerEnvironment.Development);
     }
 
     public async Task<AuthSession?> ExchangeToken(string token)
     {
         try
         {
+            DebugLog.Write("Auth", $"Exchanging token (len={token.Length}) at {_settings.ApiBase}/api/extension/exchange");
             var request = new HttpRequestMessage(HttpMethod.Post,
                 $"{_settings.ApiBase}/api/extension/exchange");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -37,6 +38,7 @@ public class AuthService
             if (!response.IsSuccessStatusCode)
             {
                 var err = await response.Content.ReadAsStringAsync();
+                DebugLog.Write("Auth", $"Exchange failed {(int)response.StatusCode} {response.StatusCode}: {err}");
                 System.Diagnostics.Debug.WriteLine($"[Auth] Exchange failed {response.StatusCode}: {err}");
                 return null;
             }
@@ -44,7 +46,7 @@ public class AuthService
             var json = await response.Content.ReadAsStringAsync();
             var data = JsonSerializer.Deserialize<JsonElement>(json);
 
-            return new AuthSession
+            var session = new AuthSession
             {
                 Token = data.TryGetProperty("token", out var rt) && !string.IsNullOrEmpty(rt.GetString())
                     ? rt.GetString()!
@@ -60,9 +62,12 @@ public class AuthService
                 PushGroups = ParsePushGroups(data),
                 EncryptionKey = data.TryGetProperty("encryptionKey", out var ek) ? ek.GetString() : null,
             };
+            DebugLog.Write("Auth", $"Exchange succeeded — user={session.DisplayName}, {session.PushGroups.Count} group(s)");
+            return session;
         }
         catch (Exception ex)
         {
+            DebugLog.Write("Auth", $"Exchange exception: {ex.Message}");
             System.Diagnostics.Debug.WriteLine($"[Auth] Exchange exception: {ex.Message}");
             return null;
         }
@@ -96,8 +101,15 @@ public class AuthService
 
             var response = await _http.SendAsync(request);
 
-            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            // 401 (token invalid) and 403 (session revoked, e.g. after a password
+            // change) both mean this session is dead — force a re-login rather than
+            // silently treating it as valid and failing every downstream call.
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                DebugLog.Write("Auth", $"Heartbeat rejected ({(int)response.StatusCode}) — session invalid");
                 return (false, null);
+            }
 
             try
             {
@@ -160,12 +172,16 @@ public class AuthService
     }
 
     // Pinned HttpClient — validates that the TLS chain contains ISRG Root X1.
-    // DEBUG builds skip pinning so dev servers with different certs still work.
-    internal static HttpClient CreatePinnedHttpClient()
+    // DEBUG builds skip pinning entirely. Release builds skip pinning only when
+    // allowDevCerts is set (i.e. the app is pointed at the Development
+    // environment, whose servers use non-pinned / hostname-mismatched certs).
+    internal static HttpClient CreatePinnedHttpClient(bool allowDevCerts = false)
     {
         var handler = new HttpClientHandler
         {
-            ServerCertificateCustomValidationCallback = ValidateServerCertificate,
+            ServerCertificateCustomValidationCallback =
+                (request, cert, chain, errors) =>
+                    ValidateServerCertificate(request, cert, chain, errors, allowDevCerts),
         };
         return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
     }
@@ -174,10 +190,27 @@ public class AuthService
         HttpRequestMessage request,
         X509Certificate2? cert,
         X509Chain? chain,
-        SslPolicyErrors errors)
+        SslPolicyErrors errors,
+        bool allowDevCerts)
     {
         DebugLog.Write("TLS", $"Validating cert for: {request.RequestUri?.Host}");
         DebugLog.Write("TLS", $"SslPolicyErrors: {errors}");
+
+#if DEBUG
+        // DEBUG builds skip pinning entirely so dev servers with mismatched /
+        // self-signed certs (e.g. dev-sync.charlestontel.com) still connect.
+        // This must run before the policy-error gate below — otherwise a
+        // RemoteCertificateNameMismatch is rejected before the bypass is reached.
+        DebugLog.Write("TLS", "DEBUG build — skipping pin check, accepting cert");
+        return true;
+#else
+        // Development environment: servers aren't pinned and may present a
+        // hostname-mismatched cert, so skip validation. Production stays strict.
+        if (allowDevCerts)
+        {
+            DebugLog.Write("TLS", "Development environment — skipping pin check, accepting cert");
+            return true;
+        }
 
         if (errors != SslPolicyErrors.None)
         {
@@ -199,10 +232,6 @@ public class AuthService
             DebugLog.Write("TLS", $"  {element.Certificate.Subject} → {thumbprint}");
         }
 
-#if DEBUG
-        DebugLog.Write("TLS", "DEBUG build — skipping pin check");
-        return errors == SslPolicyErrors.None;
-#else
         const string isrgThumbprint =
             "96BCEC06264976F37460779ACF28C5A7" +
             "CFE8A3C0AAE11A8FFCEE05C0BDDF08C6";
