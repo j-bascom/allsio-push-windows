@@ -132,11 +132,18 @@ public partial class App : Application
             {
                 _uiContext.Post(_ => presenter.OpenUrl(copy.Url!), null);
             }
+            else if (copy.TemplateType?.ToLowerInvariant() == "sms")
+            {
+                _uiContext.Post(_ => presenter.ShowSmsSlideout(copy, startExpanded: false), null);
+            }
             else
             {
                 _uiContext.Post(_ => presenter.ShowSlideout(copy), null);
             }
         });
+
+        _toastService.RegisterSmsReplyHandler(notification =>
+            _uiContext.Post(_ => presenter.ShowSmsSlideout(notification, startExpanded: true), null));
 
         _toastService.OnTransferAction += (action, connectionId) =>
         {

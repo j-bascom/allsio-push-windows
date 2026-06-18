@@ -383,6 +383,7 @@ public class PusherService : IDisposable
             SenderName = Get("senderName", "sender_name"),
             SenderPhone = Get("senderPhone", "sender_phone"),
             ConversationId = Get("conversationId", "conversation_id"),
+            AssignmentType = Get("assignmentType", "assignment_type"),
         };
 
         // Dynamic label/value rows — try "rows" then "fields"

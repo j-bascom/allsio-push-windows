@@ -115,6 +115,15 @@ public class NotificationRouter
             return;
         }
 
+        // SMS always opens as a native slideout, regardless of the DeferToToast
+        // setting — the inline reply panel requires the native window. The
+        // notification sound has already played at the top of Route().
+        if (string.Equals(notification.TemplateType, "sms", StringComparison.OrdinalIgnoreCase))
+        {
+            _uiContext.Post(_ => OpenSmsSlideout(notification, startExpanded: false), null);
+            return;
+        }
+
         if (_settings.DeferToToast)
         {
             if (!_toastService.TryShow(notification))
@@ -245,6 +254,15 @@ public class NotificationRouter
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Router] OpenScreenPopWindow failed: {ex.Message}");
+        }
+    }
+
+    private void OpenSmsSlideout(PushNotification notification, bool startExpanded)
+    {
+        try { _presenter.ShowSmsSlideout(notification, startExpanded); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Router] OpenSmsSlideout failed: {ex.Message}");
         }
     }
 

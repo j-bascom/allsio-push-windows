@@ -131,6 +131,45 @@ public class AckService
         }
     }
 
+    // Posts an SMS reply to our own API (uses ApiBase, not AdminBase).
+    // Signs with the same escaped path used in the request URL so the
+    // server's HMAC verification matches byte-for-byte (mirrors Acknowledge).
+    public async Task<bool> SendSmsReply(string conversationId, string message)
+    {
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            System.Diagnostics.Debug.WriteLine("[SMS] Skipping reply — no conversationId");
+            return false;
+        }
+
+        var token = _session?.Token;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            System.Diagnostics.Debug.WriteLine("[SMS] Skipping reply — no session token");
+            return false;
+        }
+
+        try
+        {
+            var path = $"/api/sms/inbox/conversations/{Uri.EscapeDataString(conversationId)}/reply";
+            var request = new HttpRequestMessage(HttpMethod.Post, $"{_settings.ApiBase}{path}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Content = new StringContent(
+                JsonSerializer.Serialize(new { message }),
+                Encoding.UTF8, "application/json");
+            AuthService.AddSigningHeaders(request, token, "POST", path);
+
+            var response = await _http.SendAsync(request);
+            System.Diagnostics.Debug.WriteLine($"[SMS] Reply sent: {response.StatusCode}");
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SMS] Reply failed: {ex.Message}");
+            return false;
+        }
+    }
+
     public async Task PostTransferAction(string url)
     {
         var token = _session?.Token;

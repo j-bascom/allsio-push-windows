@@ -12,6 +12,7 @@ public class ToastService
     private readonly SynchronizationContext _uiContext;
     private readonly ConcurrentDictionary<string, PushNotification> _byId = new();
     private Action<PushNotification>? _openWindowCallback;
+    private Action<PushNotification>? _openSmsReplyCallback;
     private bool _activationRegistered = false;
 
     public event Action<string, string>? OnTransferAction;
@@ -21,6 +22,13 @@ public class ToastService
         _settings = settings;
         _ackService = ackService;
         _uiContext = uiContext;
+    }
+
+    // Lets the App open the SMS slideout (in expanded reply state) when a
+    // toast's "sms_reply" action is activated.
+    public void RegisterSmsReplyHandler(Action<PushNotification> openSmsReplyExpanded)
+    {
+        _openSmsReplyCallback = openSmsReplyExpanded;
     }
 
     public void RegisterActivationHandler(Action<PushNotification> openWindowCallback)
@@ -90,6 +98,28 @@ public class ToastService
                         && _openWindowCallback != null)
                     {
                         var cb = _openWindowCallback;
+                        _uiContext.Post(_ => cb(payload), null);
+                    }
+                    break;
+                }
+            case "sms_open":
+                {
+                    var convId = args.Get("conversationId");
+                    if (!string.IsNullOrWhiteSpace(convId))
+                    {
+                        var url = $"{_settings.AdminBase}/dashboard/sms/inbox?conversation={Uri.EscapeDataString(convId)}";
+                        _uiContext.Post(_ => OpenInBrowser(url), null);
+                    }
+                    break;
+                }
+            case "sms_reply":
+                {
+                    // Re-open the stored SMS payload as a slideout in expanded reply state.
+                    if (!string.IsNullOrWhiteSpace(id)
+                        && _byId.TryGetValue(id, out var payload)
+                        && _openSmsReplyCallback != null)
+                    {
+                        var cb = _openSmsReplyCallback;
                         _uiContext.Post(_ => cb(payload), null);
                     }
                     break;

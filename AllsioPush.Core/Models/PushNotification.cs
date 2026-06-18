@@ -34,6 +34,7 @@ public class PushNotification
     public string? SenderName { get; set; }
     public string? SenderPhone { get; set; }
     public string? ConversationId { get; set; }
+    public string? AssignmentType { get; set; }
 
     // Scalar payload fields not mapped to a dedicated property (e.g. callId,
     // agentName, phorest_*/qbo_* CRM fields). Keyed by their original JSON name.

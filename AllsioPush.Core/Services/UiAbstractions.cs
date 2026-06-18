@@ -22,6 +22,7 @@ public interface INotificationPresenter
 {
     void ShowPopup(PushNotification notification);
     void ShowSlideout(PushNotification notification);
+    void ShowSmsSlideout(PushNotification notification, bool startExpanded);
     void ShowScreenPop(ScreenPopData data);
     void OpenUrl(string url);
 }

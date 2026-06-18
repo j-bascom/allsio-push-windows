@@ -35,6 +35,12 @@ public class UiPresenter : INotificationPresenter
         win.Activate();
     }
 
+    public void ShowSmsSlideout(PushNotification notification, bool startExpanded)
+    {
+        var win = new SmsSlideoutWindow(notification, _settings, _ackService, _windowTracker, startExpanded);
+        win.Activate();
+    }
+
     public void ShowScreenPop(ScreenPopData data)
     {
         var win = new ScreenPopWindow(data, _settings, _windowTracker);
