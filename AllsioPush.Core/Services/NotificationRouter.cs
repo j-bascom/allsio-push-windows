@@ -14,8 +14,13 @@ public class NotificationRouter
     private readonly HistoryService _history;
     private readonly INotificationPresenter _presenter;
     private readonly ToneService _toneService;
+    private AuthSession? _session;
 
     public event Action<HistoryEntry>? OnEntrySaved;
+
+    // The router needs the live session to read SmsNotificationScope for SMS
+    // scope filtering. Updated on connect and cleared on sign-out.
+    public void SetSession(AuthSession? session) => _session = session;
 
     public NotificationRouter(
         AppSettings settings,
@@ -120,6 +125,21 @@ public class NotificationRouter
         // notification sound has already played at the top of Route().
         if (string.Equals(notification.TemplateType, "sms", StringComparison.OrdinalIgnoreCase))
         {
+            // Filter by the user's SMS notification scope before surfacing.
+            var scope = _session?.SmsNotificationScope ?? "mine";
+            var assignmentType = notification.AssignmentType ?? "unassigned";
+            bool shouldShow = scope switch
+            {
+                "personal_only" => assignmentType == "personal",
+                "mine" => assignmentType == "personal" || assignmentType == "department",
+                _ => true, // "all" — show everything, including unassigned
+            };
+            if (!shouldShow)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SMS] Suppressed by scope {scope}: {assignmentType}");
+                return;
+            }
+
             _uiContext.Post(_ => OpenSmsSlideout(notification, startExpanded: false), null);
             return;
         }

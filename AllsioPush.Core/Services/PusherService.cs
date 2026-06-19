@@ -23,7 +23,9 @@ public class PusherService : IDisposable
     private readonly List<string> _subscribedChannels = new();
 
     public event Action<PushNotification>? OnNotificationReceived;
-    public event Action<string, string>? OnAcknowledgementReceived;
+    // (notificationId, acknowledgedBy, conversationId?, actionType?)
+    // conversationId/actionType are populated only for SMS conversation acks.
+    public event Action<string, string, string?, string?>? OnAcknowledgementReceived;
     public event Action<bool>? OnConnectionStateChanged;
     public event Action<IReadOnlyList<string>>? OnChannelsChanged;
     public event Action<List<PushGroup>>? OnChannelsUpdated;
@@ -201,7 +203,9 @@ public class PusherService : IDisposable
                         var obj = JObject.Parse(ev.Data ?? "{}");
                         var id = (string?)obj["notificationId"] ?? (string?)obj["notification_id"] ?? "";
                         var by = (string?)obj["acknowledgedBy"] ?? (string?)obj["acknowledged_by"] ?? "";
-                        OnAcknowledgementReceived?.Invoke(id, by);
+                        var convId = (string?)obj["conversationId"] ?? (string?)obj["conversation_id"];
+                        var actionType = (string?)obj["actionType"] ?? (string?)obj["action_type"];
+                        OnAcknowledgementReceived?.Invoke(id, by, convId, actionType);
                     }
                     catch (Exception ex)
                     {

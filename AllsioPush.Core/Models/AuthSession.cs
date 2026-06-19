@@ -13,6 +13,11 @@ public class AuthSession
     public string PersonalChannel { get; set; } = string.Empty;
     public List<PushGroup> PushGroups { get; set; } = new();
     public string? EncryptionKey { get; set; }
+
+    // Which SMS conversations this user is notified about: "personal_only",
+    // "mine" (personal + department), or "all". Drives scope filtering of
+    // sms-template notifications. Defaults to "mine".
+    public string SmsNotificationScope { get; set; } = "mine";
 }
 
 public class PushGroup

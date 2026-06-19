@@ -16,6 +16,14 @@ public interface IScreenPopTarget
     void CallEnded();
 }
 
+/// An SMS slideout that can be remotely acknowledged when someone else
+/// replies to / acknowledges the same conversation.
+public interface ISmsAckTarget
+{
+    string? ConversationId { get; }
+    void RemoteAcknowledged(string acknowledgedBy, string? actionType);
+}
+
 /// Abstraction the router uses to surface UI without depending on the App layer.
 /// The App implements this; calls arrive already marshalled to the UI thread.
 public interface INotificationPresenter

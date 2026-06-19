@@ -3,6 +3,7 @@ namespace AllsioPush.Services;
 public class WindowTracker
 {
     private readonly List<IRemoteAckTarget> _targets = new();
+    private readonly List<ISmsAckTarget> _smsTargets = new();
     private readonly Dictionary<string, List<IScreenPopTarget>> _screenPops = new(StringComparer.Ordinal);
     private readonly object _lock = new();
 
@@ -31,6 +32,38 @@ public class WindowTracker
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[WindowTracker] Notify failed: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    public void RegisterSms(ISmsAckTarget target)
+    {
+        lock (_lock) _smsTargets.Add(target);
+    }
+
+    public void UnregisterSms(ISmsAckTarget target)
+    {
+        lock (_lock) _smsTargets.Remove(target);
+    }
+
+    // Notify any open SMS slideout whose conversation matches that someone else
+    // replied to / acknowledged it (so it can show a label and dismiss).
+    public void BroadcastSmsAck(string conversationId, string acknowledgedBy, string? actionType)
+    {
+        if (string.IsNullOrWhiteSpace(conversationId)) return;
+
+        ISmsAckTarget[] snapshot;
+        lock (_lock) snapshot = _smsTargets.ToArray();
+
+        foreach (var t in snapshot)
+        {
+            if (string.Equals(t.ConversationId, conversationId, StringComparison.Ordinal))
+            {
+                try { t.RemoteAcknowledged(acknowledgedBy, actionType); }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[WindowTracker] SMS ack notify failed: {ex.Message}");
                 }
             }
         }

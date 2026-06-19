@@ -61,6 +61,9 @@ public class AuthService
                 PersonalChannel = data.TryGetProperty("personalChannel", out var pc) ? pc.GetString() ?? "" : "",
                 PushGroups = ParsePushGroups(data),
                 EncryptionKey = data.TryGetProperty("encryptionKey", out var ek) ? ek.GetString() : null,
+                SmsNotificationScope = data.TryGetProperty("smsNotificationScope", out var scope)
+                    ? scope.GetString() ?? "mine"
+                    : "mine",
             };
             DebugLog.Write("Auth", $"Exchange succeeded — user={session.DisplayName}, {session.PushGroups.Count} group(s)");
             return session;

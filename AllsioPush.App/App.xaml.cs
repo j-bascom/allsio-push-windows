@@ -267,6 +267,7 @@ public partial class App : Application
 
     private async Task ConnectPusher(AuthSession s)
     {
+        _router.SetSession(s);
         _pusher?.Dispose();
         _pusher = new PusherService(s, _settings);
         _pusher.OnConnectionStateChanged += connected =>
@@ -294,7 +295,7 @@ public partial class App : Application
         };
         _pusher.OnNotificationReceived += notification =>
             _uiContext.Post(_ => _router.Route(notification), null);
-        _pusher.OnAcknowledgementReceived += (notificationId, acknowledgedBy) =>
+        _pusher.OnAcknowledgementReceived += (notificationId, acknowledgedBy, conversationId, actionType) =>
         {
             _ = _historyService.RecordAction(notificationId, "acknowledged", acknowledgedBy);
             _uiContext.Post(_ =>
@@ -302,6 +303,11 @@ public partial class App : Application
                 _windowTracker.BroadcastRemoteAck(notificationId, acknowledgedBy);
                 _toastService.UpdateRemoteAck(notificationId, acknowledgedBy);
                 _historyWindow?.UpdateEntryAction(notificationId, "acknowledged", acknowledgedBy);
+
+                // SMS conversation acks carry a conversationId so open SMS
+                // slideouts for that conversation can show who replied.
+                if (!string.IsNullOrEmpty(conversationId))
+                    _windowTracker.BroadcastSmsAck(conversationId, acknowledgedBy, actionType);
             }, null);
         };
         _pusher.OnSupervisedTransfer += req => _transferService.HandleTransferRequest(req);
@@ -401,6 +407,7 @@ public partial class App : Application
         CredentialManager.ClearSession();
         _session = null;
         _ackService.SetSession(null);
+        _router.SetSession(null);
         _tray.SetAuthState(false);
         _tray.SetConnected(false);
         _tray.UpdateChannels(Array.Empty<string>());

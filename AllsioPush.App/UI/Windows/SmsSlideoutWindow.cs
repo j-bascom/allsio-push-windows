@@ -17,7 +17,7 @@ namespace AllsioPush.UI.Windows;
 /// Specialized slideout for "sms" notifications. Mirrors SlideoutWindow's
 /// positioning / theming / slide animation, but adds an expandable inline
 /// reply panel and never auto-dismisses (SMS stays until actioned).
-public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
+public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, ISmsAckTarget
 {
     private static readonly SolidColorBrush GreenBrush = new(ColorHelper.FromArgb(255, 34, 197, 94));
     private static readonly SolidColorBrush RedBrush = new(ColorHelper.FromArgb(255, 239, 68, 68));
@@ -41,6 +41,10 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     private TextBlock _statusText = null!;
     private Button _replyButton = null!;
     private Button _sendButton = null!;
+    private StackPanel _actionsPanel = null!;
+
+    private bool _remoteAcked;
+    private System.Threading.Timer? _remoteAckTimer;
 
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _slideTimer;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _slideYTimer;
@@ -61,6 +65,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     bool IStackableToast.IsClosing => _closing;
 
     public string? NotificationId => _notification.NotificationId;
+    public string? ConversationId => _notification.ConversationId;
 
     public SmsSlideoutWindow(
         PushNotification notification,
@@ -84,12 +89,15 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         _root.Loaded += (_, _) =>
         {
             _tracker.Register(this);
+            _tracker.RegisterSms(this);
             SizeAndPosition(_root);
             if (_startExpanded) DispatcherQueue.TryEnqueue(() => SetExpanded(true));
         };
         Closed += (_, _) =>
         {
             _tracker.Unregister(this);
+            _tracker.UnregisterSms(this);
+            _remoteAckTimer?.Dispose();
             RemoveFromStack();
         };
     }
@@ -285,7 +293,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
 
     private FrameworkElement BuildActions()
     {
-        var panel = new StackPanel
+        _actionsPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 8,
@@ -299,9 +307,9 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         var open = new Button { Content = "Open" };
         open.Click += (_, _) => OnOpenClicked();
 
-        panel.Children.Add(_replyButton);
-        panel.Children.Add(open);
-        return panel;
+        _actionsPanel.Children.Add(_replyButton);
+        _actionsPanel.Children.Add(open);
+        return _actionsPanel;
     }
 
     private static void ApplyAccentStyle(Button b)
@@ -630,5 +638,58 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         // SMS notifications aren't remote-acked, but if the same id is acked
         // elsewhere just close this slideout to stay consistent.
         DispatcherQueue.TryEnqueue(() => BeginHide());
+    }
+
+    // Someone else replied to / acknowledged this conversation. Show who, lock
+    // out further replies, and dismiss after a short delay.
+    public void RemoteAcknowledged(string acknowledgedBy, string? actionType)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (_closing || _remoteAcked) return;
+                _remoteAcked = true;
+
+                var who = string.IsNullOrWhiteSpace(acknowledgedBy) ? "someone" : acknowledgedBy;
+                var label = actionType == "replied"
+                    ? $"Replied by {who}"
+                    : $"Acknowledged by {who}";
+
+                // Block any further send and disable the reply field.
+                _sending = true;
+                _replyBox.IsEnabled = false;
+
+                // Replace the action buttons with the status label.
+                _actionsPanel.Children.Clear();
+                _actionsPanel.Children.Add(new TextBlock
+                {
+                    Text = label,
+                    Foreground = GreenBrush,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontSize = 13,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+
+                _remoteAckTimer = new System.Threading.Timer(
+                    OnRemoteAckClose, null,
+                    TimeSpan.FromSeconds(2),
+                    System.Threading.Timeout.InfiniteTimeSpan);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[SMS] RemoteAcknowledged error: {ex.Message}");
+            }
+        });
+    }
+
+    private void OnRemoteAckClose(object? state)
+    {
+        _remoteAckTimer?.Dispose();
+        _remoteAckTimer = null;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { BeginHide(); } catch { }
+        });
     }
 }
