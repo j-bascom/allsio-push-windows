@@ -39,6 +39,7 @@ public class HistoryWindow : WindowEx
 
     private readonly List<HistoryEntry> _entries = new();
     private readonly Dictionary<string, EntryCard> _cardsById = new();
+    private readonly Dictionary<string, EntryCard> _cardsByConversation = new();
     private string _filter = "All Types";
     private string _sort = "Newest First";
 
@@ -286,6 +287,7 @@ public class HistoryWindow : WindowEx
     {
         _cardList.Children.Clear();
         _cardsById.Clear();
+        _cardsByConversation.Clear();
 
         var filtered = ApplyFilter(_entries);
         if (_sort == "By Channel")
@@ -303,6 +305,8 @@ public class HistoryWindow : WindowEx
             _cardList.Children.Add(card.Root);
             if (!string.IsNullOrEmpty(entry.NotificationId))
                 _cardsById[entry.NotificationId!] = card;
+            if (!string.IsNullOrEmpty(entry.ConversationId))
+                _cardsByConversation[entry.ConversationId!] = card;
         }
     }
 
@@ -322,6 +326,8 @@ public class HistoryWindow : WindowEx
                 _cardList.Children.Add(card.Root);
                 if (!string.IsNullOrEmpty(entry.NotificationId))
                     _cardsById[entry.NotificationId!] = card;
+                if (!string.IsNullOrEmpty(entry.ConversationId))
+                    _cardsByConversation[entry.ConversationId!] = card;
             }
         }
     }
@@ -424,6 +430,26 @@ public class HistoryWindow : WindowEx
                 entry.IsRemoteAck = true;
             }
             if (_cardsById.TryGetValue(notificationId, out var card))
+                card.UpdateAction(entry);
+        }, null);
+    }
+
+    // SMS conversations are matched by conversationId, not notificationId.
+    public void UpdateEntrySmsAction(string conversationId, string action, string? by)
+    {
+        _uiContext.Post(_ =>
+        {
+            var entry = _entries.FirstOrDefault(e =>
+                string.Equals(e.ConversationId, conversationId, StringComparison.Ordinal));
+            if (entry == null) return;
+            entry.ActionTaken = action;
+            entry.ActionTakenAt = DateTime.UtcNow;
+            if (!string.IsNullOrEmpty(by))
+            {
+                entry.AcknowledgedBy = by;
+                entry.IsRemoteAck = true;
+            }
+            if (_cardsByConversation.TryGetValue(conversationId, out var card))
                 card.UpdateAction(entry);
         }, null);
     }
@@ -603,6 +629,10 @@ public class HistoryWindow : WindowEx
                     !string.IsNullOrEmpty(e.AcknowledgedBy)
                         ? $"✓ Acknowledged by {e.AcknowledgedBy}{dot}{when}"
                         : $"✓ Acknowledged{dot}{when}",
+                "replied" or "reply" =>
+                    !string.IsNullOrEmpty(e.AcknowledgedBy)
+                        ? $"↩ Replied by {e.AcknowledgedBy}{dot}{when}"
+                        : $"↩ Replied{dot}{when}",
                 "dismiss" or "dismissed" => $"× Dismissed{dot}{when}",
                 "webhook" => $"↑ Sent{dot}{when}",
                 "timed_out" => $"⧗ No response{dot}{when}",
@@ -613,6 +643,7 @@ public class HistoryWindow : WindowEx
         private static SolidColorBrush ActionColor(string? action) => action switch
         {
             "ack" or "acknowledge" or "acknowledged" => GreenColor,
+            "replied" or "reply" => GreenColor,
             "webhook" => AccentColor,
             _ => TextMuted,
         };

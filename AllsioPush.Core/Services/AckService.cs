@@ -18,6 +18,10 @@ public class AckService
 
     public event Action<string, string, string?>? OnActionRecorded;
 
+    // (conversationId, action, acknowledgedBy) — raised when an SMS conversation
+    // action is recorded locally so the open HistoryWindow can update.
+    public event Action<string, string, string?>? OnSmsActionRecorded;
+
     public AckService(AppSettings settings, HistoryService history)
     {
         _settings = settings;
@@ -161,6 +165,14 @@ public class AckService
 
             var response = await _http.SendAsync(request);
             System.Diagnostics.Debug.WriteLine($"[SMS] Reply sent: {response.StatusCode}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                // Record the reply locally so history shows who replied (this user).
+                var by = _session?.DisplayName;
+                await _history.RecordSmsAction(conversationId, "replied", by);
+                RaiseSmsActionRecorded(conversationId, "replied", by);
+            }
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -200,6 +212,15 @@ public class AckService
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Ack] OnActionRecorded handler threw: {ex.Message}");
+        }
+    }
+
+    private void RaiseSmsActionRecorded(string conversationId, string action, string? by)
+    {
+        try { OnSmsActionRecorded?.Invoke(conversationId, action, by); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Ack] OnSmsActionRecorded handler threw: {ex.Message}");
         }
     }
 }

@@ -4,6 +4,7 @@ public class HistoryEntry
 {
     public string Id { get; set; } = string.Empty;
     public string? NotificationId { get; set; }
+    public string? ConversationId { get; set; }
     public string TemplateType { get; set; } = "plain_text";
     public string Title { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;

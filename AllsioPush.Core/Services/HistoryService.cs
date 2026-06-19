@@ -38,6 +38,7 @@ public class HistoryService
 CREATE TABLE IF NOT EXISTS notifications (
   id TEXT PRIMARY KEY,
   notification_id TEXT,
+  conversation_id TEXT,
   template_type TEXT,
   title TEXT,
   content TEXT,
@@ -52,6 +53,19 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_received_at ON notifications(received_at DESC);
 ";
                 cmd.ExecuteNonQuery();
+
+                // Migrate pre-existing DBs that predate the conversation_id column.
+                try
+                {
+                    using var migrate = conn.CreateCommand();
+                    migrate.CommandText = "ALTER TABLE notifications ADD COLUMN conversation_id TEXT;";
+                    migrate.ExecuteNonQuery();
+                }
+                catch
+                {
+                    // Column already exists — expected on already-migrated DBs.
+                }
+
                 _initialized = true;
             }
             catch (Exception ex)
@@ -70,6 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_received_at ON notifications(received_at DESC);
             {
                 Id = Guid.NewGuid().ToString("N"),
                 NotificationId = n.NotificationId,
+                ConversationId = n.ConversationId,
                 TemplateType = n.TemplateType,
                 Title = n.Title,
                 Content = n.Content,
@@ -84,13 +99,14 @@ CREATE INDEX IF NOT EXISTS idx_received_at ON notifications(received_at DESC);
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
 INSERT INTO notifications
-  (id, notification_id, template_type, title, content, channel_name, group_name,
+  (id, notification_id, conversation_id, template_type, title, content, channel_name, group_name,
    received_at, action_taken, action_taken_at, acknowledged_by, raw_json)
 VALUES
-  ($id, $nid, $tt, $title, $content, $channel, $group,
+  ($id, $nid, $conv, $tt, $title, $content, $channel, $group,
    $received, NULL, NULL, NULL, $raw);";
             cmd.Parameters.AddWithValue("$id", entry.Id);
             cmd.Parameters.AddWithValue("$nid", (object?)entry.NotificationId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$conv", (object?)entry.ConversationId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$tt", entry.TemplateType);
             cmd.Parameters.AddWithValue("$title", entry.Title);
             cmd.Parameters.AddWithValue("$content", entry.Content);
@@ -135,6 +151,36 @@ UPDATE notifications
         }
     }
 
+    // Records an action against every history row for an SMS conversation.
+    // SMS is keyed by conversationId (not notificationId), so regular
+    // RecordAction can't match it.
+    public async Task RecordSmsAction(string? conversationId, string action, string? acknowledgedBy = null)
+    {
+        if (string.IsNullOrWhiteSpace(conversationId)) return;
+        EnsureInitialized();
+        try
+        {
+            await using var conn = new SqliteConnection(_connectionString);
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+UPDATE notifications
+   SET action_taken = $action,
+       action_taken_at = $when,
+       acknowledged_by = COALESCE($by, acknowledged_by)
+ WHERE conversation_id = $cid;";
+            cmd.Parameters.AddWithValue("$action", action);
+            cmd.Parameters.AddWithValue("$when", DateTime.UtcNow.ToString("O"));
+            cmd.Parameters.AddWithValue("$by", (object?)acknowledgedBy ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$cid", conversationId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[History] RecordSmsAction failed: {ex.Message}");
+        }
+    }
+
     public async Task<List<HistoryEntry>> GetLocalHistory(int limit = 100)
     {
         EnsureInitialized();
@@ -146,7 +192,7 @@ UPDATE notifications
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
 SELECT id, notification_id, template_type, title, content, channel_name, group_name,
-       received_at, action_taken, action_taken_at, acknowledged_by, raw_json
+       received_at, action_taken, action_taken_at, acknowledged_by, raw_json, conversation_id
   FROM notifications
  ORDER BY received_at DESC
  LIMIT $limit;";
@@ -258,6 +304,7 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
             ActionTakenAt = ParseDate(r.IsDBNull(9) ? null : r.GetString(9)),
             AcknowledgedBy = r.IsDBNull(10) ? null : r.GetString(10),
             RawJson = r.IsDBNull(11) ? null : r.GetString(11),
+            ConversationId = r.IsDBNull(12) ? null : r.GetString(12),
         };
         entry.IsRemoteAck = !string.IsNullOrEmpty(entry.AcknowledgedBy);
         return entry;
@@ -281,6 +328,7 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
         {
             Id = Get("id") ?? Guid.NewGuid().ToString("N"),
             NotificationId = Get("notificationId", "notification_id", "id"),
+            ConversationId = Get("conversationId", "conversation_id"),
             TemplateType = Get("templateType", "template_type") ?? "plain_text",
             Title = Get("title") ?? string.Empty,
             Content = Get("content", "body", "message") ?? string.Empty,

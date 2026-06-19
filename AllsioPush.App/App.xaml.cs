@@ -121,6 +121,9 @@ public partial class App : Application
         _ackService.OnActionRecorded += (id, action, by) =>
             _uiContext.Post(_ => _historyWindow?.UpdateEntryAction(id, action, by), null);
 
+        _ackService.OnSmsActionRecorded += (convId, action, by) =>
+            _uiContext.Post(_ => _historyWindow?.UpdateEntrySmsAction(convId, action, by), null);
+
         _toastService.RegisterActivationHandler(notification =>
         {
             var copy = notification;
@@ -304,10 +307,16 @@ public partial class App : Application
                 _toastService.UpdateRemoteAck(notificationId, acknowledgedBy);
                 _historyWindow?.UpdateEntryAction(notificationId, "acknowledged", acknowledgedBy);
 
-                // SMS conversation acks carry a conversationId so open SMS
-                // slideouts for that conversation can show who replied.
+                // SMS conversation acks carry a conversationId (not a
+                // notificationId), so record/update history by conversation and
+                // notify any open SMS slideout for that conversation.
                 if (!string.IsNullOrEmpty(conversationId))
+                {
+                    var smsAction = string.IsNullOrEmpty(actionType) ? "acknowledged" : actionType!;
+                    _ = _historyService.RecordSmsAction(conversationId, smsAction, acknowledgedBy);
+                    _historyWindow?.UpdateEntrySmsAction(conversationId, smsAction, acknowledgedBy);
                     _windowTracker.BroadcastSmsAck(conversationId, acknowledgedBy, actionType);
+                }
             }, null);
         };
         _pusher.OnSupervisedTransfer += req => _transferService.HandleTransferRequest(req);
