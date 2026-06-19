@@ -57,7 +57,11 @@ public class NotificationRouter
             return;
         }
 
-        _toneService.PlayNotificationSound(notification.Sound);
+        // SMS plays its own sound only after passing scope filtering (below), so a
+        // scope-suppressed message stays silent. Everything else sounds now.
+        var isSms = string.Equals(notification.TemplateType, "sms", StringComparison.OrdinalIgnoreCase);
+        if (!isSms)
+            _toneService.PlayNotificationSound(notification.Sound);
 
         var receivedAt = DateTime.UtcNow;
 
@@ -121,9 +125,10 @@ public class NotificationRouter
         }
 
         // SMS always opens as a native slideout, regardless of the DeferToToast
-        // setting — the inline reply panel requires the native window. The
-        // notification sound has already played at the top of Route().
-        if (string.Equals(notification.TemplateType, "sms", StringComparison.OrdinalIgnoreCase))
+        // setting — the inline reply panel requires the native window. History is
+        // already persisted above; the sound is played here only when the message
+        // passes scope filtering, so suppressed messages stay silent.
+        if (isSms)
         {
             // Filter by the user's SMS notification scope before surfacing.
             var scope = _session?.SmsNotificationScope ?? "mine";
@@ -136,10 +141,11 @@ public class NotificationRouter
             };
             if (!shouldShow)
             {
-                System.Diagnostics.Debug.WriteLine($"[SMS] Suppressed by scope {scope}: {assignmentType}");
+                System.Diagnostics.Debug.WriteLine($"[SMS] Suppressed by scope {scope}: {assignmentType} (no sound)");
                 return;
             }
 
+            _toneService.PlayNotificationSound(notification.Sound);
             _uiContext.Post(_ => OpenSmsSlideout(notification, startExpanded: false), null);
             return;
         }
