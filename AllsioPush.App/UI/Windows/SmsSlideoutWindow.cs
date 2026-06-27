@@ -113,9 +113,11 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
             p.IsMinimizable = false;
         }
         AppWindow.IsShownInSwitchers = false;
-        // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
+        // Park off-screen (on the anchored side) so the window doesn't flash at
+        // center before LayoutStack moves it.
         var work = DisplayArea.Primary.WorkArea;
-        AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
+        var parkX = ToastLayout.IsLeft(ToastLayout.Anchor) ? work.X - work.Width : work.X + work.Width;
+        AppWindow.Move(new PointInt32(parkX, work.Y + work.Height));
         InitLayeredAlpha();
     }
 
@@ -383,7 +385,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
     {
         _slideTarget = target;
         var work = DisplayArea.Primary.WorkArea;
-        var startX = work.X + work.Width;
+        var startX = ToastLayout.OffScreenX(work, _pixelWidth);
         var elapsed = 0;
         AppWindow.Move(new PointInt32(startX, _slideTarget.Y));
 
@@ -434,7 +436,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
     {
         var startX = AppWindow.Position.X;
         var startY = AppWindow.Position.Y;
-        var endX = DisplayArea.Primary.WorkArea.X + DisplayArea.Primary.WorkArea.Width;
+        var endX = ToastLayout.OffScreenX(DisplayArea.Primary.WorkArea, _pixelWidth);
         var elapsed = 0;
 
         _slideTimer?.Stop();
@@ -481,15 +483,15 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
         });
     }
 
-    // Grows/shrinks the window while keeping it anchored to the bottom-right of
-    // the work area (12px margins), then re-settles the toast stack.
+    // Grows/shrinks the window while keeping it anchored per the current
+    // anchor setting, then re-settles the toast stack.
     private void AnimateToHeight(int targetPixelHeight, Action onComplete)
     {
         var area = DisplayArea.Primary.WorkArea;
         var startH = _pixelHeight;
         var startY = AppWindow.Position.Y;
-        var x = area.X + area.Width - _pixelWidth - Margin;
-        var endY = area.Y + area.Height - Margin - targetPixelHeight;
+        var x = ToastLayout.RestX(area, _pixelWidth);
+        var endY = ToastLayout.NewestTop(area, targetPixelHeight);
         _pixelHeight = targetPixelHeight;
 
         var elapsed = 0;

@@ -175,6 +175,29 @@ public class SettingsWindow : WindowEx
 
         immediateRadio.Checked += (_, _) => SetDisplayMode(false);
         deferRadio.Checked += (_, _) => SetDisplayMode(true);
+
+        section.Children.Add(new TextBlock { Text = "Location", Margin = new Thickness(0, 12, 0, 6) });
+        // Items are added in NotificationAnchor declaration order so the
+        // selected index maps directly to the enum value.
+        var locationCombo = new ComboBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 180,
+        };
+        locationCombo.Items.Add("Bottom right");
+        locationCombo.Items.Add("Bottom left");
+        locationCombo.Items.Add("Top right");
+        locationCombo.Items.Add("Top left");
+        locationCombo.Items.Add("Middle right");
+        locationCombo.Items.Add("Middle left");
+        locationCombo.SelectedIndex = (int)_settings.NotificationLocation;
+        locationCombo.SelectionChanged += (_, _) =>
+        {
+            if (locationCombo.SelectedIndex < 0) return;
+            SetNotificationLocation((NotificationAnchor)locationCombo.SelectedIndex);
+        };
+        section.Children.Add(locationCombo);
+
         return section;
     }
 
@@ -215,6 +238,14 @@ public class SettingsWindow : WindowEx
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 6),
         });
+
+        var whatsNew = new Button { Content = "What's New", Margin = new Thickness(0, 4, 0, 4) };
+        whatsNew.Click += (_, _) =>
+        {
+            try { new ChangelogWindow().Activate(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Settings] Open changelog failed: {ex.Message}"); }
+        };
+        section.Children.Add(whatsNew);
 
         var openFolder = new Button { Content = "Open app data folder", Margin = new Thickness(0, 4, 0, 4) };
         openFolder.Click += (_, _) => OpenAppDataFolder();
@@ -304,5 +335,15 @@ public class SettingsWindow : WindowEx
         _settings.DeferToToast = deferToToast;
         SettingsManager.Save(_settings);
         UpdateDisplayModeDesc();
+    }
+
+    private void SetNotificationLocation(NotificationAnchor anchor)
+    {
+        if (_settings.NotificationLocation == anchor) return;
+        _settings.NotificationLocation = anchor;
+        SettingsManager.Save(_settings);
+        // Apply to the live process and re-settle any open toasts immediately.
+        ToastLayout.Anchor = anchor;
+        SlideoutWindow.LayoutStack();
     }
 }

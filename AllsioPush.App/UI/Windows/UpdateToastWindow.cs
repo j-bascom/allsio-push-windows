@@ -94,9 +94,11 @@ public class UpdateToastWindow : WindowEx, IStackableToast
             p.IsMinimizable = false;
         }
         AppWindow.IsShownInSwitchers = false;
-        // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
+        // Park off-screen (on the anchored side) so the window doesn't flash at
+        // center before LayoutStack moves it.
         var work = DisplayArea.Primary.WorkArea;
-        AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
+        var parkX = ToastLayout.IsLeft(ToastLayout.Anchor) ? work.X - work.Width : work.X + work.Width;
+        AppWindow.Move(new PointInt32(parkX, work.Y + work.Height));
         InitLayeredAlpha();
     }
 
@@ -229,7 +231,7 @@ public class UpdateToastWindow : WindowEx, IStackableToast
     {
         _slideTarget = target;
         var work = DisplayArea.Primary.WorkArea;
-        var startX = work.X + work.Width;
+        var startX = ToastLayout.OffScreenX(work, _pixelWidth);
         var elapsed = 0;
         AppWindow.Move(new PointInt32(startX, _slideTarget.Y));
 
@@ -281,7 +283,7 @@ public class UpdateToastWindow : WindowEx, IStackableToast
     {
         var startX = AppWindow.Position.X;
         var startY = AppWindow.Position.Y;
-        var endX = DisplayArea.Primary.WorkArea.X + DisplayArea.Primary.WorkArea.Width;
+        var endX = ToastLayout.OffScreenX(DisplayArea.Primary.WorkArea, _pixelWidth);
         var elapsed = 0;
 
         _slideTimer?.Stop();

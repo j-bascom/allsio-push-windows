@@ -143,9 +143,11 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
             p.IsMinimizable = false;
         }
         AppWindow.IsShownInSwitchers = false;
-        // Park off-screen so the window doesn't flash at center before LayoutStack moves it.
+        // Park off-screen (on the anchored side) so the window doesn't flash at
+        // center before LayoutStack moves it.
         var work = DisplayArea.Primary.WorkArea;
-        AppWindow.Move(new PointInt32(work.X + work.Width, work.Y + work.Height));
+        var parkX = ToastLayout.IsLeft(ToastLayout.Anchor) ? work.X - work.Width : work.X + work.Width;
+        AppWindow.Move(new PointInt32(parkX, work.Y + work.Height));
         if (!_isHtmlContent) InitLayeredAlpha();
     }
 
@@ -210,31 +212,55 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
         if (removed) LayoutStack();
     }
 
-    // Stack open toasts bottom-up along the right edge: newest sits at the
-    // bottom, older ones step up by their own height plus a gap. Each window
-    // moves itself on its own dispatcher so cross-thread moves stay safe.
+    // Stack open toasts away from the anchor edge: the newest toast sits at the
+    // anchor (bottom edge, top edge, or vertical center per the setting) and
+    // older ones step away by their own height plus a gap. Each window moves
+    // itself on its own dispatcher so cross-thread moves stay safe.
     internal static void LayoutStack()
     {
-        const int margin = 12;
-        const int gap = 8;
         IStackableToast[] snapshot;
         lock (StackLock) snapshot = Stack.ToArray();
 
         var area = DisplayArea.Primary.WorkArea;
-        var y = area.Y + area.Height - margin;
-        for (var i = snapshot.Length - 1; i >= 0; i--)
+        var anchor = ToastLayout.Anchor;
+
+        if (ToastLayout.GrowsDown(anchor))
         {
-            var win = snapshot[i];
-            var wy = y - win.PixelHeight;
-            var wx = area.X + area.Width - win.PixelWidth - margin;
-            y = wy - gap;
-            var pos = new PointInt32(wx, wy);
-            win.DispatcherQueue.TryEnqueue(() =>
+            // Anchor edge = top. Newest at the top, older march downward.
+            var y = area.Y + ToastLayout.Margin;
+            for (var i = snapshot.Length - 1; i >= 0; i--)
             {
-                if (win.IsClosing) return;
-                try { win.MoveTo(pos); } catch { }
-            });
+                var win = snapshot[i];
+                var wx = ToastLayout.RestX(area, win.PixelWidth);
+                EnqueueMove(win, new PointInt32(wx, y));
+                y += win.PixelHeight + ToastLayout.Gap;
+            }
         }
+        else
+        {
+            // Anchor edge = bottom or vertical center. Newest at the baseline,
+            // older march upward.
+            var y = ToastLayout.IsMiddle(anchor)
+                ? area.Y + area.Height / 2
+                : area.Y + area.Height - ToastLayout.Margin;
+            for (var i = snapshot.Length - 1; i >= 0; i--)
+            {
+                var win = snapshot[i];
+                var wy = y - win.PixelHeight;
+                var wx = ToastLayout.RestX(area, win.PixelWidth);
+                y = wy - ToastLayout.Gap;
+                EnqueueMove(win, new PointInt32(wx, wy));
+            }
+        }
+    }
+
+    private static void EnqueueMove(IStackableToast win, PointInt32 pos)
+    {
+        win.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (win.IsClosing) return;
+            try { win.MoveTo(pos); } catch { }
+        });
     }
 
     void IStackableToast.MoveTo(PointInt32 target)
@@ -258,7 +284,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     {
         _slideTarget = target;
         var work = DisplayArea.Primary.WorkArea;
-        var startX = work.X + work.Width;
+        var startX = ToastLayout.OffScreenX(work, _pixelWidth);
         var elapsed = 0;
         AppWindow.Move(new PointInt32(startX, _slideTarget.Y));
 
@@ -310,7 +336,7 @@ public class SlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast
     {
         var startX = AppWindow.Position.X;
         var startY = AppWindow.Position.Y;
-        var endX = DisplayArea.Primary.WorkArea.X + DisplayArea.Primary.WorkArea.Width;
+        var endX = ToastLayout.OffScreenX(DisplayArea.Primary.WorkArea, _pixelWidth);
         var elapsed = 0;
 
         _slideTimer?.Stop();

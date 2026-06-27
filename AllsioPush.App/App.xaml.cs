@@ -95,6 +95,7 @@ public partial class App : Application
     {
         SettingsManager.RegisterUriScheme();
         _settings = SettingsManager.Load();
+        ToastLayout.Anchor = _settings.NotificationLocation;
         _toneService = new ToneService(_settings);
         SettingsManager.SetLaunchOnStartup(_settings.LaunchOnStartup);
 

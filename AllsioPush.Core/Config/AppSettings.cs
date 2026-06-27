@@ -6,12 +6,25 @@ public enum ServerEnvironment
     Development
 }
 
+// Where notification slideouts anchor on screen. Order matters: the
+// Settings dropdown is built from these in declaration order.
+public enum NotificationAnchor
+{
+    BottomRight,
+    BottomLeft,
+    TopRight,
+    TopLeft,
+    MiddleRight,
+    MiddleLeft
+}
+
 public class AppSettings
 {
     public ServerEnvironment Environment { get; set; } = ServerEnvironment.Production;
     public bool SoundEnabled { get; set; } = true;
     public bool DeferToToast { get; set; } = false;
     public bool LaunchOnStartup { get; set; } = true;
+    public NotificationAnchor NotificationLocation { get; set; } = NotificationAnchor.BottomRight;
 
     public string ApiBase => Environment == ServerEnvironment.Production
         ? "https://sync.charlestontel.com"
