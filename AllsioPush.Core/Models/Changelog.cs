@@ -35,6 +35,24 @@ public static class Changelog
     {
         new ChangelogRelease
         {
+            Version = "2026.6.30",
+            Date = "June 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Improvement, "Updates now install quietly with a small progress notification instead of a pop-up dialog."),
+            },
+        },
+        new ChangelogRelease
+        {
+            Version = "2026.6.29",
+            Date = "June 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Feature, "Choose where notifications appear on your screen — pick from six positions, including the corners and top/bottom center."),
+            },
+        },
+        new ChangelogRelease
+        {
             Version = "2026.6.28",
             Date = "June 2026",
             Items = new List<ChangeItem>

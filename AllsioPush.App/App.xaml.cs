@@ -179,20 +179,9 @@ public partial class App : Application
                     "Update checks are only available in the installed version.");
                 return;
             }
-            var toast = new UpdateToastWindow();
-            toast.Activate();
-            try
-            {
-                await _updateService.CheckAndApplyUpdates(
-                    onStatus: toast.SetMessage,
-                    onProgress: toast.SetProgress);
-            }
-            finally
-            {
-                // Reached only when no update was found (restart case kills the process).
-                toast.HideProgress();
-                toast.AutoClose(4000);
-            }
+            // Manual check — the user asked, so surface the toast immediately
+            // (including the "up to date" result).
+            await CheckForUpdatesWithToast(showWhenUpToDate: true);
         };
 
         _ = Task.Run(async () =>
@@ -201,7 +190,17 @@ public partial class App : Application
             while (true)
             {
                 if (_updateService.IsInstalled)
-                    await _updateService.CheckAndApplyUpdates();
+                {
+                    // Background check — run the toast flow on the UI thread and
+                    // stay silent unless an update is actually found.
+                    var done = new TaskCompletionSource();
+                    _uiContext.Post(async _ =>
+                    {
+                        try { await CheckForUpdatesWithToast(showWhenUpToDate: false); }
+                        finally { done.TrySetResult(); }
+                    }, null);
+                    await done.Task;
+                }
                 await Task.Delay(TimeSpan.FromHours(4));
             }
         });
@@ -324,6 +323,39 @@ public partial class App : Application
         _pusher.OnSupervisedTransferCancelled += id => _transferService.HandleCancellation(id);
         await _pusher.ConnectAsync();
         _ = _toneService.LoadTonesAsync();
+    }
+
+    // Drives an update check through the in-app UpdateToastWindow instead of
+    // Velopack's native dialog. Must be called on the UI thread (creates a
+    // window and may exit the app). When showWhenUpToDate is false the toast is
+    // created lazily — only once an update is actually found.
+    private async Task CheckForUpdatesWithToast(bool showWhenUpToDate)
+    {
+        UpdateToastWindow? toast = null;
+        void EnsureToast()
+        {
+            if (toast != null) return;
+            toast = new UpdateToastWindow();
+            toast.Activate();
+        }
+
+        if (showWhenUpToDate) EnsureToast();
+
+        var outcome = await _updateService.CheckAndApplyUpdates(
+            onStatus: m => toast?.SetMessage(m),
+            onProgress: p => toast?.SetProgress(p),
+            onUpdateFound: EnsureToast);
+
+        if (outcome == UpdateOutcome.RestartRequired)
+        {
+            // Velopack's updater is waiting on this process to exit before it
+            // swaps files and relaunches us — shut down gracefully now.
+            DoExit();
+            return;
+        }
+
+        toast?.HideProgress();
+        toast?.AutoClose(4000);
     }
 
     private void ShowLogin()
