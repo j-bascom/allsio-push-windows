@@ -35,6 +35,17 @@ public static class Changelog
     {
         new ChangelogRelease
         {
+            Version = "2026.6.31",
+            Date = "June 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Fix, "Fixed a sign-in problem that could repeatedly reject correct credentials."),
+                new(ChangeKind.Fix, "Notification history now requires sign-in and is hidden until you're signed in."),
+                new(ChangeKind.Improvement, "Your notification history is tied to your account — it clears when you sign out and reloads when you sign back in."),
+            },
+        },
+        new ChangelogRelease
+        {
             Version = "2026.6.30",
             Date = "June 2026",
             Items = new List<ChangeItem>

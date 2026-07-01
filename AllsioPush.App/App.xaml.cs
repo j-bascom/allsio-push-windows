@@ -101,7 +101,7 @@ public partial class App : Application
 
         _session = CredentialManager.LoadSession();
         _authService = new AuthService(_settings);
-        _historyService = new HistoryService();
+        _historyService = new HistoryService(_settings);
         _ackService = new AckService(_settings, _historyService);
         if (_session != null) _ackService.SetSession(_session);
 
@@ -377,6 +377,7 @@ public partial class App : Application
             _loginWindow = null;
             _tray.SetAuthState(true);
             _ = ConnectPusher(s);
+            _ = _historyService.SyncFromServer(s.Token, _settings.ApiBase);
         };
         _loginWindow.Closed += (_, _) => _loginWindow = null;
         _loginWindow.Activate();
@@ -418,6 +419,10 @@ public partial class App : Application
 
     private void ShowHistory()
     {
+        // Notification history is per-user data and must stay gated behind
+        // sign-in. The tray menu item is grayed out when signed out, but the
+        // tray icon's left-click also routes here — so guard at the source.
+        if (_session == null) return;
         try
         {
             if (_historyWindow != null)
@@ -456,6 +461,9 @@ public partial class App : Application
         _settingsWindow?.Close();
         _historyWindow?.Close();
         _debugLogWindow?.Close();
+        // History is per-user; wipe the local copy on sign-out. It re-syncs
+        // from the server on the next sign-in (HistoryService.SyncFromServer).
+        _ = _historyService.ClearAll();
         ShowLogin();
     }
 
@@ -483,6 +491,7 @@ public partial class App : Application
                 _loginWindow = null;
                 _tray.SetAuthState(true);
                 _ = ConnectPusher(newSession);
+                _ = _historyService.SyncFromServer(newSession.Token, _settings.ApiBase);
                 _tray.ShowBalloon("Allsio Push", "Signed in.");
             }, null);
         });

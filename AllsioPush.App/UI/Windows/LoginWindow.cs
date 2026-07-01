@@ -89,13 +89,6 @@ public class LoginWindow : WindowEx
                 null, userDataFolder, new CoreWebView2EnvironmentOptions());
             await _webView.EnsureCoreWebView2Async(env);
 
-            // Let WebView2 offer to save and autofill credentials so users can
-            // use their saved passwords / passkeys at sign-in. (Both default to
-            // off.) Passkeys/WebAuthn are handled by the WebView2 runtime via
-            // Windows Hello and are independent of the per-load cookie wipe.
-            _webView.CoreWebView2.Settings.IsGeneralAutofillEnabled = true;
-            _webView.CoreWebView2.Settings.IsPasswordAutosaveEnabled = true;
-
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
             _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
             _webView.CoreWebView2.NewWindowRequested += (s, e) =>
@@ -137,8 +130,15 @@ public class LoginWindow : WindowEx
         if (_webView.CoreWebView2 == null) return;
         try
         {
+            // Wipe cookies/site data AND any saved passwords / autofill on every
+            // sign-in. The password/autofill clear purges stale credentials a
+            // prior build (2026.6.30, which had autosave on) may have saved —
+            // those could otherwise ghost-fill the form and cause lockouts.
             await _webView.CoreWebView2.Profile.ClearBrowsingDataAsync(
-                CoreWebView2BrowsingDataKinds.Cookies | CoreWebView2BrowsingDataKinds.AllSite);
+                CoreWebView2BrowsingDataKinds.Cookies
+                | CoreWebView2BrowsingDataKinds.AllSite
+                | CoreWebView2BrowsingDataKinds.PasswordAutosave
+                | CoreWebView2BrowsingDataKinds.GeneralAutofill);
         }
         catch
         {

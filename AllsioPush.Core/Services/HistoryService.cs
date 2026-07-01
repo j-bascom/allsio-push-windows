@@ -15,12 +15,16 @@ public class HistoryService
     private readonly object _initLock = new();
     private bool _initialized = false;
 
-    public HistoryService()
+    public HistoryService(AppSettings settings)
     {
         Directory.CreateDirectory(SettingsManager.GetAppDataPath());
         _dbPath = Path.Combine(SettingsManager.GetAppDataPath(), "history.db");
         _connectionString = $"Data Source={_dbPath}";
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        // Use the same pinned / dev-aware client the rest of the API uses — the
+        // server rejects requests over an unpinned client in some environments,
+        // and dev certs aren't pinned.
+        _http = AuthService.CreatePinnedHttpClient(
+            settings.Environment == ServerEnvironment.Development);
     }
 
     private void EnsureInitialized()
@@ -217,14 +221,19 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
 
         try
         {
+            // Path is signed without the query string, matching the rest of the API.
+            const string path = "/api/notifications/history";
             var request = new HttpRequestMessage(HttpMethod.Get,
-                $"{apiBase}/api/notifications/history?limit={limit}");
+                $"{apiBase}{path}?limit={limit}");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            AuthService.AddSigningHeaders(request, token, "GET", path);
 
             var response = await _http.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
-                System.Diagnostics.Debug.WriteLine($"[History] Server fetch failed: {response.StatusCode}");
+                var err = await response.Content.ReadAsStringAsync();
+                DebugLog.Write("History",
+                    $"Server fetch failed {(int)response.StatusCode} {response.StatusCode}: {err}");
                 return list;
             }
 
@@ -242,10 +251,11 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
             {
                 list.Add(ParseServerEntry(item));
             }
+            DebugLog.Write("History", $"Server fetch ok — {list.Count} entr{(list.Count == 1 ? "y" : "ies")}");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[History] GetServerHistory exception: {ex.Message}");
+            DebugLog.Write("History", $"GetServerHistory exception: {ex.Message}");
         }
         return list;
     }
@@ -285,6 +295,72 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[History] ClearAll failed: {ex.Message}");
+        }
+    }
+
+    // Pulls the signed-in user's history from the server and merges it into the
+    // local store. Called on sign-in to repopulate after ClearAll() wiped the
+    // previous session's data at sign-out, so each user only sees their own.
+    public async Task SyncFromServer(string token, string apiBase, int limit = 200)
+    {
+        var rows = await GetServerHistory(token, apiBase, limit);
+        await MergeServerEntries(rows);
+    }
+
+    // Inserts server-sourced rows not already present locally (matched by
+    // notification id). Server rows carry no raw payload, so a synced row can't
+    // be replayed from the history list until that notification arrives live.
+    public async Task MergeServerEntries(IReadOnlyList<HistoryEntry> entries)
+    {
+        if (entries == null || entries.Count == 0) return;
+        EnsureInitialized();
+        try
+        {
+            await using var conn = new SqliteConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var existing = new HashSet<string>(StringComparer.Ordinal);
+            await using (var sel = conn.CreateCommand())
+            {
+                sel.CommandText = "SELECT notification_id FROM notifications WHERE notification_id IS NOT NULL;";
+                await using var r = await sel.ExecuteReaderAsync();
+                while (await r.ReadAsync()) existing.Add(r.GetString(0));
+            }
+
+            foreach (var e in entries)
+            {
+                // Skip rows already stored locally (and de-dupe within the batch).
+                if (!string.IsNullOrEmpty(e.NotificationId) && !existing.Add(e.NotificationId))
+                    continue;
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+INSERT OR IGNORE INTO notifications
+  (id, notification_id, conversation_id, template_type, title, content, channel_name, group_name,
+   received_at, action_taken, action_taken_at, acknowledged_by, raw_json)
+VALUES
+  ($id, $nid, $conv, $tt, $title, $content, $channel, $group,
+   $received, $action, $actionAt, $by, NULL);";
+                cmd.Parameters.AddWithValue("$id",
+                    string.IsNullOrEmpty(e.Id) ? Guid.NewGuid().ToString("N") : e.Id);
+                cmd.Parameters.AddWithValue("$nid", (object?)e.NotificationId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$conv", (object?)e.ConversationId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$tt", e.TemplateType ?? "plain_text");
+                cmd.Parameters.AddWithValue("$title", e.Title ?? string.Empty);
+                cmd.Parameters.AddWithValue("$content", e.Content ?? string.Empty);
+                cmd.Parameters.AddWithValue("$channel", (object?)e.ChannelName ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$group", (object?)e.GroupName ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$received", e.ReceivedAt.ToUniversalTime().ToString("O"));
+                cmd.Parameters.AddWithValue("$action", (object?)e.ActionTaken ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$actionAt",
+                    (object?)e.ActionTakenAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$by", (object?)e.AcknowledgedBy ?? DBNull.Value);
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[History] MergeServerEntries failed: {ex.Message}");
         }
     }
 

@@ -73,7 +73,8 @@ public class TrayManager : IDisposable
         {
             Text = "Notification History",
             Command = new DelegateCommand(() => OnOpenHistory?.Invoke(this, EventArgs.Empty)),
-            Visibility = Visibility.Collapsed,
+            // Grayed out until signed in — history is per-user data.
+            IsEnabled = false,
         };
         var settings = new MenuFlyoutItem
         {
@@ -120,7 +121,7 @@ public class TrayManager : IDisposable
         if (_disposed) return;
         _signedIn = signedIn;
         _authItem.Text = signedIn ? "Sign Out" : "Sign In";
-        _historyItem.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
+        _historyItem.IsEnabled = signedIn;
         RefreshStatusItem();
     }
 
