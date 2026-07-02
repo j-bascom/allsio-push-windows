@@ -256,6 +256,11 @@ public partial class App : Application
                     }
                 }
                 await ConnectPusher(session!);
+                // Restored-session startup (auto-start on Windows login, or after
+                // an auto-update) must sync too — otherwise history only refreshes
+                // on an interactive sign-in and misses anything that changed
+                // server-side while the app was closed. De-duped by id, so safe.
+                _ = _historyService.SyncFromServer(session!.Token, _settings.ApiBase);
             });
         }
         else if (!string.IsNullOrWhiteSpace(startupToken))

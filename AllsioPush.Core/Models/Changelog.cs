@@ -35,6 +35,18 @@ public static class Changelog
     {
         new ChangelogRelease
         {
+            Version = "2026.6.32",
+            Date = "July 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Fix, "Notification history now loads correctly from the server — earlier versions could show nothing after the local history was cleared."),
+                new(ChangeKind.Improvement, "History now refreshes from the server automatically every time the app starts, so you see the latest across your devices."),
+                new(ChangeKind.Improvement, "You can now re-open notifications from history that were synced from the server, not just ones received on this device."),
+                new(ChangeKind.Improvement, "History syncing is limited to the last 30 days."),
+            },
+        },
+        new ChangelogRelease
+        {
             Version = "2026.6.31",
             Date = "June 2026",
             Items = new List<ChangeItem>

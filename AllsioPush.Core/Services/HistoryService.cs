@@ -214,7 +214,8 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
         return list;
     }
 
-    public async Task<List<HistoryEntry>> GetServerHistory(string token, string apiBase, int limit = 100)
+    public async Task<List<HistoryEntry>> GetServerHistory(
+        string token, string apiBase, int limit = 100, int sinceDays = 30)
     {
         var list = new List<HistoryEntry>();
         if (string.IsNullOrWhiteSpace(token)) return list;
@@ -241,17 +242,31 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            // Accept either {items:[...]} or [...]
+            // Server shape is {notifications:[...]}. Also accept {items:[...]},
+            // {history:[...]}, {data:[...]}, or a bare [...] for robustness.
             JsonElement arr = root;
-            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("items", out var items))
-                arr = items;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("notifications", out var notifs)) arr = notifs;
+                else if (root.TryGetProperty("items", out var items)) arr = items;
+                else if (root.TryGetProperty("history", out var hist)) arr = hist;
+                else if (root.TryGetProperty("data", out var data)) arr = data;
+            }
             if (arr.ValueKind != JsonValueKind.Array) return list;
 
+            // The server has no date filter (limit/offset only), so bound the
+            // window client-side to the last N days.
+            var cutoff = sinceDays > 0 ? DateTime.UtcNow.AddDays(-sinceDays) : DateTime.MinValue;
+            var skippedOld = 0;
             foreach (var item in arr.EnumerateArray())
             {
-                list.Add(ParseServerEntry(item));
+                var entry = ParseServerEntry(item);
+                if (entry.ReceivedAt.ToUniversalTime() < cutoff) { skippedOld++; continue; }
+                list.Add(entry);
             }
-            DebugLog.Write("History", $"Server fetch ok — {list.Count} entr{(list.Count == 1 ? "y" : "ies")}");
+            DebugLog.Write("History",
+                $"Server fetch ok — {list.Count} entr{(list.Count == 1 ? "y" : "ies")}"
+                + (skippedOld > 0 ? $" ({skippedOld} older than {sinceDays}d skipped)" : ""));
         }
         catch (Exception ex)
         {
@@ -308,8 +323,8 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
     }
 
     // Inserts server-sourced rows not already present locally (matched by
-    // notification id). Server rows carry no raw payload, so a synced row can't
-    // be replayed from the history list until that notification arrives live.
+    // notification id). ParseServerEntry reconstructs a replayable RawJson from
+    // the server's stored payload, so synced rows can be re-opened as popups.
     public async Task MergeServerEntries(IReadOnlyList<HistoryEntry> entries)
     {
         if (entries == null || entries.Count == 0) return;
@@ -329,9 +344,33 @@ SELECT id, notification_id, template_type, title, content, channel_name, group_n
 
             foreach (var e in entries)
             {
-                // Skip rows already stored locally (and de-dupe within the batch).
+                // Row already stored locally (or a dupe within this batch): don't
+                // re-insert, but backfill a replayable payload / remote-ack info
+                // if the existing row is missing it (e.g. synced before RawJson
+                // was captured, or acked on the server since). COALESCE preserves
+                // anything already there — never clobbers a live row's payload.
                 if (!string.IsNullOrEmpty(e.NotificationId) && !existing.Add(e.NotificationId))
+                {
+                    if (!string.IsNullOrEmpty(e.RawJson) || !string.IsNullOrEmpty(e.AcknowledgedBy))
+                    {
+                        await using var upd = conn.CreateCommand();
+                        upd.CommandText = @"
+UPDATE notifications
+   SET raw_json        = COALESCE(raw_json, $raw),
+       acknowledged_by = COALESCE(acknowledged_by, $by),
+       action_taken    = COALESCE(action_taken, $action),
+       action_taken_at = COALESCE(action_taken_at, $actionAt)
+ WHERE notification_id = $nid;";
+                        upd.Parameters.AddWithValue("$raw", (object?)e.RawJson ?? DBNull.Value);
+                        upd.Parameters.AddWithValue("$by", (object?)e.AcknowledgedBy ?? DBNull.Value);
+                        upd.Parameters.AddWithValue("$action", (object?)e.ActionTaken ?? DBNull.Value);
+                        upd.Parameters.AddWithValue("$actionAt",
+                            (object?)e.ActionTakenAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
+                        upd.Parameters.AddWithValue("$nid", e.NotificationId);
+                        await upd.ExecuteNonQueryAsync();
+                    }
                     continue;
+                }
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
@@ -340,7 +379,7 @@ INSERT OR IGNORE INTO notifications
    received_at, action_taken, action_taken_at, acknowledged_by, raw_json)
 VALUES
   ($id, $nid, $conv, $tt, $title, $content, $channel, $group,
-   $received, $action, $actionAt, $by, NULL);";
+   $received, $action, $actionAt, $by, $raw);";
                 cmd.Parameters.AddWithValue("$id",
                     string.IsNullOrEmpty(e.Id) ? Guid.NewGuid().ToString("N") : e.Id);
                 cmd.Parameters.AddWithValue("$nid", (object?)e.NotificationId ?? DBNull.Value);
@@ -355,6 +394,7 @@ VALUES
                 cmd.Parameters.AddWithValue("$actionAt",
                     (object?)e.ActionTakenAt?.ToUniversalTime().ToString("O") ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("$by", (object?)e.AcknowledgedBy ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("$raw", (object?)e.RawJson ?? DBNull.Value);
                 await cmd.ExecuteNonQueryAsync();
             }
         }
@@ -388,11 +428,14 @@ VALUES
 
     private static HistoryEntry ParseServerEntry(JsonElement e)
     {
-        string? Get(params string[] keys)
+        // Reads a key from any object element, returning strings as-is and other
+        // scalar kinds via their raw text.
+        static string? Get(JsonElement el, params string[] keys)
         {
+            if (el.ValueKind != JsonValueKind.Object) return null;
             foreach (var k in keys)
             {
-                if (e.TryGetProperty(k, out var v) && v.ValueKind != JsonValueKind.Null)
+                if (el.TryGetProperty(k, out var v) && v.ValueKind != JsonValueKind.Null)
                 {
                     return v.ValueKind == JsonValueKind.String ? v.GetString() : v.ToString();
                 }
@@ -400,22 +443,91 @@ VALUES
             return null;
         }
 
+        // The notification content lives in a nested "payload" object (the
+        // original fired payload). Defensively handle a JSON-encoded string too.
+        JsonElement payload = default;
+        bool hasPayload = false;
+        if (e.ValueKind == JsonValueKind.Object
+            && e.TryGetProperty("payload", out var pl) && pl.ValueKind != JsonValueKind.Null)
+        {
+            if (pl.ValueKind == JsonValueKind.Object)
+            {
+                payload = pl;
+                hasPayload = true;
+            }
+            else if (pl.ValueKind == JsonValueKind.String)
+            {
+                try
+                {
+                    var s = pl.GetString();
+                    if (!string.IsNullOrWhiteSpace(s))
+                    {
+                        using var pdoc = JsonDocument.Parse(s);
+                        payload = pdoc.RootElement.Clone();
+                        hasPayload = payload.ValueKind == JsonValueKind.Object;
+                    }
+                }
+                catch { /* leave payload empty; fall back to envelope fields */ }
+            }
+        }
+
+        // Prefer the payload for content fields, falling back to the envelope so
+        // a flatter server shape still parses.
+        string? P(params string[] keys) => hasPayload ? Get(payload, keys) : null;
+
+        var acknowledgedAt = Get(e, "acknowledgedAt", "acknowledged_at", "actionTakenAt", "action_taken_at");
+        var acknowledgedBy = Get(e, "acknowledgedByName", "acknowledged_by_name", "acknowledgedBy", "acknowledged_by");
+
         var entry = new HistoryEntry
         {
-            Id = Get("id") ?? Guid.NewGuid().ToString("N"),
-            NotificationId = Get("notificationId", "notification_id", "id"),
-            ConversationId = Get("conversationId", "conversation_id"),
-            TemplateType = Get("templateType", "template_type") ?? "plain_text",
-            Title = Get("title") ?? string.Empty,
-            Content = Get("content", "body", "message") ?? string.Empty,
-            ChannelName = Get("channelName", "channel_name"),
-            GroupName = Get("groupName", "group_name"),
-            ReceivedAt = ParseDate(Get("receivedAt", "received_at", "createdAt", "created_at")) ?? DateTime.UtcNow,
-            ActionTaken = Get("actionTaken", "action_taken", "action"),
-            ActionTakenAt = ParseDate(Get("actionTakenAt", "action_taken_at")),
-            AcknowledgedBy = Get("acknowledgedBy", "acknowledged_by"),
+            Id = Get(e, "id") ?? Guid.NewGuid().ToString("N"),
+            // Acks are matched by the payload's notificationId; fall back to the
+            // envelope id only if the payload lacks one.
+            NotificationId = P("notificationId", "notification_id", "id")
+                             ?? Get(e, "notificationId", "notification_id", "id"),
+            ConversationId = P("conversationId", "conversation_id")
+                             ?? Get(e, "conversationId", "conversation_id"),
+            TemplateType = P("templateType", "template_type")
+                           ?? Get(e, "templateType", "template_type") ?? "plain_text",
+            Title = P("title") ?? Get(e, "title") ?? string.Empty,
+            Content = P("content", "body", "message")
+                      ?? Get(e, "content", "body", "message") ?? string.Empty,
+            ChannelName = P("channelName", "channel_name") ?? Get(e, "channelName", "channel_name"),
+            GroupName = P("groupName", "group_name") ?? Get(e, "groupName", "group_name"),
+            ReceivedAt = ParseDate(Get(e, "sentAt", "sent_at", "receivedAt", "received_at",
+                                       "createdAt", "created_at")) ?? DateTime.UtcNow,
+            ActionTakenAt = ParseDate(acknowledgedAt),
+            AcknowledgedBy = acknowledgedBy,
         };
+        // An ack timestamp or an acked-by name means it was acknowledged;
+        // otherwise fall back to any explicit action field.
+        entry.ActionTaken = (!string.IsNullOrEmpty(acknowledgedAt) || !string.IsNullOrEmpty(acknowledgedBy))
+            ? "acknowledged"
+            : Get(e, "actionTaken", "action_taken", "action");
         entry.IsRemoteAck = !string.IsNullOrEmpty(entry.AcknowledgedBy);
+
+        // Reconstruct a replayable payload from the server's stored wire-format
+        // payload (same shape as a live Pusher event), so history rows synced
+        // from the server can be re-opened as popups just like live ones.
+        if (hasPayload)
+        {
+            try
+            {
+                var n = PusherService.ParseNotification(payload.GetRawText(), entry.ChannelName ?? string.Empty);
+                if (n != null)
+                {
+                    // Preserve identity fields the envelope may know better than the payload.
+                    n.NotificationId ??= entry.NotificationId;
+                    n.ConversationId ??= entry.ConversationId;
+                    n.GroupName ??= entry.GroupName;
+                    entry.RawJson = JsonSerializer.Serialize(n);
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog.Write("History", $"Payload reconstruct failed: {ex.Message}");
+            }
+        }
         return entry;
     }
 

@@ -218,6 +218,10 @@ public class HistoryWindow : WindowEx
         {
             var serverRows = await _history.GetServerHistory(session.Token, _settings.ApiBase, 200);
 
+            // Persist to the local DB so the rows survive a Refresh / re-open —
+            // GetServerHistory alone is display-only.
+            await _history.MergeServerEntries(serverRows);
+
             var byId = new Dictionary<string, HistoryEntry>(StringComparer.Ordinal);
             foreach (var e in _entries)
             {
@@ -257,6 +261,16 @@ public class HistoryWindow : WindowEx
         await _history.ClearAll();
         _entries.Clear();
         Render();
+
+        // Clearing resets the local cache to the authoritative server copy —
+        // otherwise the DB stays permanently empty until the next sign-in, since
+        // SyncFromServer only fires on sign-in. Re-pull now so history comes back.
+        var session = _sessionGetter();
+        if (session != null && !string.IsNullOrWhiteSpace(session.Token))
+        {
+            await _history.SyncFromServer(session.Token, _settings.ApiBase);
+            await ReloadLocalAsync();
+        }
     }
 
     private async Task ShowMessage(string message)

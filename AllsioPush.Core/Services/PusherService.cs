@@ -334,7 +334,9 @@ public class PusherService : IDisposable
         }
     }
 
-    private static PushNotification? ParseNotification(string? data, string channelName)
+    // Public so history replay can reconstruct a PushNotification from the
+    // server's stored wire-format payload (same shape as a live Pusher event).
+    public static PushNotification? ParseNotification(string? data, string channelName)
     {
         if (string.IsNullOrWhiteSpace(data)) return null;
         var obj = JObject.Parse(data);
