@@ -271,6 +271,48 @@ public partial class App : Application
         {
             ShowLogin();
         }
+
+        MaybeShowUpgradeNotice();
+    }
+
+    private static string CurrentVersionString()
+    {
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        return v == null ? string.Empty : $"{v.Major}.{v.Minor}.{v.Build}";
+    }
+
+    // On the first launch after an update completes (Velopack swaps files and
+    // relaunches us), show a one-off self-dismissing notice. It's a transient
+    // system message, so persistHistory:false — it must not land in history.
+    private void MaybeShowUpgradeNotice()
+    {
+        try
+        {
+            var current = CurrentVersionString();
+            if (string.IsNullOrEmpty(current)) return;
+
+            var last = _settings.LastRunVersion;
+            if (!string.IsNullOrEmpty(last) && last != current)
+            {
+                var notice = new PushNotification
+                {
+                    NotificationId = $"upgrade-{current}",
+                    TemplateType = "plain_text",
+                    DisplayMode = "slideout",
+                    Title = "Allsio Push updated",
+                    Content = $"Upgrade to {current} complete.",
+                    Ttl = 10, // auto-dismiss after 10 seconds
+                };
+                _router.Route(notice, persistHistory: false);
+            }
+
+            if (last != current)
+            {
+                _settings.LastRunVersion = current;
+                SettingsManager.Save(_settings);
+            }
+        }
+        catch (Exception ex) { Log("UpgradeNotice", ex); }
     }
 
     private async Task ConnectPusher(AuthSession s)

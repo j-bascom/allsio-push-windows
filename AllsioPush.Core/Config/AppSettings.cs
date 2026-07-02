@@ -26,6 +26,11 @@ public class AppSettings
     public bool LaunchOnStartup { get; set; } = true;
     public NotificationAnchor NotificationLocation { get; set; } = NotificationAnchor.BottomRight;
 
+    // The app version that last ran on this machine. Used to detect a completed
+    // update on the next launch so we can show a one-off "upgrade complete"
+    // notice. Null on a fresh install (no notice shown then).
+    public string? LastRunVersion { get; set; }
+
     public string ApiBase => Environment == ServerEnvironment.Production
         ? "https://sync.charlestontel.com"
         : "https://dev-sync.charlestontel.com";

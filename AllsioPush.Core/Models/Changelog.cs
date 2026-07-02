@@ -35,6 +35,15 @@ public static class Changelog
     {
         new ChangelogRelease
         {
+            Version = "2026.7.1",
+            Date = "July 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Improvement, "After an update installs, you'll see a brief \"Upgrade complete\" notification when the app restarts."),
+            },
+        },
+        new ChangelogRelease
+        {
             Version = "2026.6.32",
             Date = "July 2026",
             Items = new List<ChangeItem>
