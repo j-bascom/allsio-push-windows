@@ -128,13 +128,17 @@ public partial class App : Application
         _toastService.RegisterActivationHandler(notification =>
         {
             var copy = notification;
-            if (copy.DisplayMode == "popup" || copy.TemplateType == "url_popup")
+            if (copy.TemplateType == "url_popup" && !string.IsNullOrWhiteSpace(copy.Url))
             {
-                _uiContext.Post(_ => presenter.ShowPopup(copy), null);
+                _uiContext.Post(_ => presenter.OpenUrlInNewWindow(copy.Url!), null);
             }
             else if (copy.TemplateType == "url_tab" && !string.IsNullOrWhiteSpace(copy.Url))
             {
                 _uiContext.Post(_ => presenter.OpenUrl(copy.Url!), null);
+            }
+            else if (copy.DisplayMode == "popup")
+            {
+                _uiContext.Post(_ => presenter.ShowPopup(copy), null);
             }
             else if (copy.TemplateType?.ToLowerInvariant() == "sms")
             {

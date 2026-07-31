@@ -32,5 +32,11 @@ public interface INotificationPresenter
     void ShowSlideout(PushNotification notification);
     void ShowSmsSlideout(PushNotification notification, bool startExpanded);
     void ShowScreenPop(ScreenPopData data);
+
+    /// Opens the URL in a new tab of the user's default browser.
     void OpenUrl(string url);
+
+    /// Opens the URL in a dedicated new window of the user's default browser
+    /// (falls back to a new tab when the browser can't be launched that way).
+    void OpenUrlInNewWindow(string url);
 }

@@ -85,6 +85,10 @@ public class NotificationRouter
             });
         }
 
+        // url_tab opens a new tab in the user's default browser; url_popup opens a
+        // dedicated new browser window. Both use the real default browser (with the
+        // user's session/cookies) rather than the embedded WebView2 that url_popup
+        // previously rendered into.
         if (notification.TemplateType == "url_tab")
         {
             if (!string.IsNullOrWhiteSpace(notification.Url))
@@ -94,7 +98,8 @@ public class NotificationRouter
 
         if (notification.TemplateType == "url_popup")
         {
-            _uiContext.Post(_ => OpenPopupWindow(notification), null);
+            if (!string.IsNullOrWhiteSpace(notification.Url))
+                OpenUrlInNewWindow(notification.Url!);
             return;
         }
 
@@ -253,6 +258,15 @@ public class NotificationRouter
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[Router] OpenUrl failed: {ex.Message}");
+        }
+    }
+
+    private void OpenUrlInNewWindow(string url)
+    {
+        try { _presenter.OpenUrlInNewWindow(url); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Router] OpenUrlInNewWindow failed: {ex.Message}");
         }
     }
 
