@@ -35,6 +35,24 @@ public static class Changelog
     {
         new ChangelogRelease
         {
+            Version = "2026.8.1",
+            Date = "August 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Improvement, "Signing in now happens in your default browser instead of inside the app, so password managers and passkeys work the way they normally do."),
+            },
+        },
+        new ChangelogRelease
+        {
+            Version = "2026.7.2",
+            Date = "July 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Fix, "Notification buttons that open a link now open it in your default browser instead of a window inside the app."),
+            },
+        },
+        new ChangelogRelease
+        {
             Version = "2026.7.1",
             Date = "July 2026",
             Items = new List<ChangeItem>

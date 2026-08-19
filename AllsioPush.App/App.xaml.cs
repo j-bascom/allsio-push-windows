@@ -164,7 +164,14 @@ public partial class App : Application
         _singleInstance.OnSecondInstanceArgs += incomingArgs =>
         {
             var token = ExtractToken(incomingArgs);
-            if (!string.IsNullOrWhiteSpace(token)) HandleIncomingToken(token!);
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                // Browser sign-in handing the token back over allsio-push://.
+                // HandleIncomingToken owns the user-facing result ("Signed in."),
+                // so don't also fire the generic "Already running." balloon.
+                HandleIncomingToken(token!);
+                return;
+            }
             _tray.ShowBalloon("Allsio Push", "Already running.");
         };
 
@@ -224,7 +231,9 @@ public partial class App : Application
             if (current == null) return;
             var (valid, newToken) = await _authService.SendHeartbeat(current.Token);
             if (!valid)
-                _uiContext.Post(_ => ForceSignOut(), null);
+                // Session died server-side rather than by the user's choice, so
+                // prompt to sign in again.
+                _uiContext.Post(_ => ForceSignOut(promptSignIn: true), null);
             else if (newToken != null && newToken != current.Token)
             {
                 current.Token = newToken;
@@ -445,7 +454,7 @@ public partial class App : Application
                 _settingsWindow.Activate();
                 return;
             }
-            _settingsWindow = new SettingsWindow(_settings, _session, DoSignOut, ShowDebugLog);
+            _settingsWindow = new SettingsWindow(_settings, _session, DoSignOut, ShowLogin, ShowDebugLog);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Activate();
         }
@@ -489,16 +498,25 @@ public partial class App : Application
         catch (Exception ex) { Log("ShowHistory", ex); }
     }
 
+    /// <summary>
+    /// User-initiated sign-out. Ends the session server-side, then tears down
+    /// locally WITHOUT reopening the login window: the browser still holds the
+    /// admin-panel session (and the password manager still holds the
+    /// credentials), so popping sign-in straight back up would sign the user
+    /// right back in — a sign-out that does not stay signed out. They re-enter
+    /// deliberately via the tray menu, which now reads "Sign In".
+    /// </summary>
     private async void DoSignOut()
     {
         if (_session != null)
         {
             try { await _authService.Logout(_session.Token); } catch { }
         }
-        ForceSignOut();
+        ForceSignOut(promptSignIn: false);
+        _tray.ShowBalloon("Allsio Push", "Signed out.");
     }
 
-    private void ForceSignOut()
+    private void ForceSignOut(bool promptSignIn)
     {
         _pusher?.Dispose();
         _pusher = null;
@@ -515,7 +533,7 @@ public partial class App : Application
         // History is per-user; wipe the local copy on sign-out. It re-syncs
         // from the server on the next sign-in (HistoryService.SyncFromServer).
         _ = _historyService.ClearAll();
-        ShowLogin();
+        if (promptSignIn) ShowLogin();
     }
 
     private void HandleIncomingToken(string token)
@@ -531,6 +549,11 @@ public partial class App : Application
             if (newSession == null)
             {
                 System.Diagnostics.Debug.WriteLine("[App] Incoming token exchange failed.");
+                // The browser path exchanges the token here, not in LoginWindow, so
+                // the window has no idea this failed — it would sit on "Waiting for
+                // you to finish…" forever. Push the failure back to it.
+                _uiContext.Post(_ => _loginWindow?.ShowSignInError(
+                    "Sign-in failed. Please try again."), null);
                 return;
             }
             _uiContext.Post(_ =>

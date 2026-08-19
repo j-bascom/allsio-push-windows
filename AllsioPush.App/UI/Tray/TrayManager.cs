@@ -61,7 +61,10 @@ public class TrayManager : IDisposable
         _channelsItem = new MenuFlyoutSubItem { Text = "Channels" };
         _authItem = new MenuFlyoutItem
         {
-            Text = "Sign Out",
+            // Matches the _signedIn=false default. SetAuthState keeps it in sync
+            // afterwards; starting it on "Sign Out" briefly mislabelled the item
+            // as sign-out while it would in fact have started a sign-in.
+            Text = "Sign In",
             Command = new DelegateCommand(() =>
             {
                 if (_signedIn) OnSignOut?.Invoke(this, EventArgs.Empty);
