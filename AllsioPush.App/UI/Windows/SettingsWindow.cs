@@ -182,6 +182,51 @@ public class SettingsWindow : WindowEx
         };
         section.Children.Add(locationCombo);
 
+        section.Children.Add(new TextBlock { Text = "Animation", Margin = new Thickness(0, 12, 0, 6) });
+        // Items follow NotificationAnimation declaration order so the selected
+        // index maps straight to the enum value, same as Location above.
+        var animCombo = new ComboBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 180,
+        };
+        animCombo.Items.Add("Slide in");
+        animCombo.Items.Add("Fade in");
+        animCombo.SelectedIndex = (int)_settings.NotificationAnimation;
+        animCombo.SelectionChanged += (_, _) =>
+        {
+            if (animCombo.SelectedIndex < 0) return;
+            SetNotificationAnimation((NotificationAnimation)animCombo.SelectedIndex);
+        };
+        section.Children.Add(animCombo);
+
+        section.Children.Add(new TextBlock { Text = "Text message timeout", Margin = new Thickness(0, 12, 0, 6) });
+        var smsTtlCombo = new ComboBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 180,
+        };
+        foreach (var (label, _) in SmsTtlChoices) smsTtlCombo.Items.Add(label);
+        // An unrecognised stored value (hand-edited settings.json) falls back to
+        // "Stay until dismissed" rather than silently snapping to some duration.
+        var ttlIndex = Array.FindIndex(SmsTtlChoices, c => c.Seconds == _settings.SmsTtlSeconds);
+        smsTtlCombo.SelectedIndex = ttlIndex >= 0 ? ttlIndex : 0;
+        smsTtlCombo.SelectionChanged += (_, _) =>
+        {
+            if (smsTtlCombo.SelectedIndex < 0) return;
+            SetSmsTtl(SmsTtlChoices[smsTtlCombo.SelectedIndex].Seconds);
+        };
+        section.Children.Add(smsTtlCombo);
+        section.Children.Add(new TextBlock
+        {
+            Text = "How long a text message stays on screen. The countdown pauses "
+                 + "while you're hovering over it or writing a reply.",
+            Foreground = TextMuted,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 0),
+        });
+
         return section;
     }
 
@@ -373,6 +418,39 @@ public class SettingsWindow : WindowEx
         _settings.DeferToToast = deferToToast;
         SettingsManager.Save(_settings);
         UpdateDisplayModeDesc();
+    }
+
+    // 0 = stay until dismissed, matching AppSettings.SmsTtlSeconds's default.
+    private static readonly (string Label, int Seconds)[] SmsTtlChoices =
+    {
+        ("Stay until dismissed", 0),
+        ("5 seconds", 5),
+        ("10 seconds", 10),
+        ("30 seconds", 30),
+        ("1 minute", 60),
+        ("2 minutes", 120),
+        ("5 minutes", 300),
+        ("10 minutes", 600),
+        ("30 minutes", 1800),
+    };
+
+    private void SetSmsTtl(int seconds)
+    {
+        if (_settings.SmsTtlSeconds == seconds) return;
+        _settings.SmsTtlSeconds = seconds;
+        SettingsManager.Save(_settings);
+        DebugLog.Write("Settings", $"SMS timeout set to {seconds}s.");
+        // Applies to the next SMS that arrives; open slideouts keep the timing
+        // they started with rather than having a bar appear or vanish on them.
+    }
+
+    private void SetNotificationAnimation(NotificationAnimation animation)
+    {
+        if (_settings.NotificationAnimation == animation) return;
+        _settings.NotificationAnimation = animation;
+        SettingsManager.Save(_settings);
+        // Live for the next notification, like the anchor above.
+        ToastLayout.Animation = animation;
     }
 
     private void SetNotificationLocation(NotificationAnchor anchor)

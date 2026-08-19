@@ -35,6 +35,17 @@ public static class Changelog
     {
         new ChangelogRelease
         {
+            Version = "2026.8.2",
+            Date = "August 2026",
+            Items = new List<ChangeItem>
+            {
+                new(ChangeKind.Feature, "Text message notifications can now close on their own — pick a timeout under Settings → Notifications. The countdown pauses while you're hovering over the message or writing a reply, so nothing disappears mid-sentence."),
+                new(ChangeKind.Feature, "Notifications can now fade in instead of sliding in — choose which you prefer under Settings → Notifications → Animation."),
+                new(ChangeKind.Fix, "The \"Allsio Push updated\" notice no longer shows Copy and Acknowledge buttons it had no use for, and now clears itself after 5 seconds instead of 10."),
+            },
+        },
+        new ChangelogRelease
+        {
             Version = "2026.8.1",
             Date = "August 2026",
             Items = new List<ChangeItem>

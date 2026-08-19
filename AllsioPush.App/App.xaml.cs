@@ -96,6 +96,7 @@ public partial class App : Application
         SettingsManager.RegisterUriScheme();
         _settings = SettingsManager.Load();
         ToastLayout.Anchor = _settings.NotificationLocation;
+        ToastLayout.Animation = _settings.NotificationAnimation;
         _toneService = new ToneService(_settings);
         SettingsManager.SetLaunchOnStartup(_settings.LaunchOnStartup);
 
@@ -314,7 +315,10 @@ public partial class App : Application
                     DisplayMode = "slideout",
                     Title = "Allsio Push updated",
                     Content = $"Upgrade to {current} complete.",
-                    Ttl = 10, // auto-dismiss after 10 seconds
+                    Ttl = 5,
+                    // Purely informational: it needs no buttons, and there is no
+                    // server-side notification to acknowledge.
+                    SuppressActions = true,
                 };
                 _router.Route(notice, persistHistory: false);
             }

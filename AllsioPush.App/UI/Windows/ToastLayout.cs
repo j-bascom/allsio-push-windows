@@ -17,6 +17,11 @@ internal static class ToastLayout
     // and again whenever the Settings dropdown changes it.
     internal static NotificationAnchor Anchor = NotificationAnchor.BottomRight;
 
+    // Entrance/exit style, same lifecycle as Anchor above. Windows hosting a
+    // WebView2 ignore this and always slide: they never enable the layered
+    // window style that alpha blending needs.
+    internal static NotificationAnimation Animation = NotificationAnimation.Slide;
+
     // Left-edge anchors slide in/out on the left; everything else on the right.
     internal static bool IsLeft(NotificationAnchor a) =>
         a is NotificationAnchor.TopLeft

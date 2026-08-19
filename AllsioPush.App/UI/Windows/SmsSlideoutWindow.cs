@@ -16,7 +16,12 @@ namespace AllsioPush.UI.Windows;
 
 /// Specialized slideout for "sms" notifications. Mirrors SlideoutWindow's
 /// positioning / theming / slide animation, but adds an expandable inline
-/// reply panel and never auto-dismisses (SMS stays until actioned).
+/// reply panel.
+///
+/// Auto-dismiss is opt-in via AppSettings.SmsTtlSeconds (0 = stay until
+/// actioned, the default). Unlike a regular notification, the countdown here
+/// pauses while the reply panel is open or a send is in flight — a window that
+/// disappeared mid-reply would throw away what the user had typed.
 public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, ISmsAckTarget
 {
     private static readonly SolidColorBrush GreenBrush = new(ColorHelper.FromArgb(255, 34, 197, 94));
@@ -36,6 +41,8 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
     private bool _startExpanded;
 
     private Grid _root = null!;
+    private Grid _ttlBar = null!;
+    private Border _ttlFill = null!;
     private StackPanel _replyPanel = null!;
     private TextBox _replyBox = null!;
     private TextBlock _statusText = null!;
@@ -56,6 +63,11 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
     private bool _closing;
     private bool _expanded;
     private bool _sending;
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _ttlTimer;
+    private int _ttlElapsedMs;
+    private int _ttlTotalMs;
+    private bool _ttlHovered;
 
     private int _pixelWidth;
     private int _pixelHeight;
@@ -91,6 +103,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
             _tracker.Register(this);
             _tracker.RegisterSms(this);
             SizeAndPosition(_root);
+            if (_settings.SmsTtlSeconds > 0) StartTtlCountdown(_settings.SmsTtlSeconds);
             if (_startExpanded) DispatcherQueue.TryEnqueue(() => SetExpanded(true));
         };
         Closed += (_, _) =>
@@ -101,6 +114,8 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
             RemoveFromStack();
         };
     }
+
+    private bool UseFade => ToastLayout.Animation == NotificationAnimation.Fade;
 
     private void ConfigurePresenter()
     {
@@ -160,10 +175,29 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
             Child = stack,
         };
 
+        _ttlFill = new Border { Background = GreenBrush };
+        _ttlBar = new Grid
+        {
+            Height = 10,
+            Margin = new Thickness(0, 2, 0, 0),
+            Background = new SolidColorBrush(ColorHelper.FromArgb(255, 55, 55, 55)),
+            Visibility = _settings.SmsTtlSeconds > 0 ? Visibility.Visible : Visibility.Collapsed,
+        };
+        // Col 0 = green fill (shrinks), Col 1 = dark track remainder (grows)
+        _ttlBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _ttlBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0, GridUnitType.Star) });
+        Grid.SetColumn(_ttlFill, 0);
+        _ttlBar.Children.Add(_ttlFill);
+
         var root = new Grid { RequestedTheme = ElementTheme.Dark };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Grid.SetRow(card, 0);
+        Grid.SetRow(_ttlBar, 1);
         root.Children.Add(card);
+        root.Children.Add(_ttlBar);
+        root.PointerEntered += (_, _) => _ttlHovered = true;
+        root.PointerExited += (_, _) => _ttlHovered = false;
         return root;
     }
 
@@ -383,6 +417,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
 
     private void StartSlideIn(PointInt32 target)
     {
+        if (UseFade) { StartFadeIn(target); return; }
         _slideTarget = target;
         var work = DisplayArea.Primary.WorkArea;
         var startX = ToastLayout.OffScreenX(work, _pixelWidth);
@@ -411,6 +446,71 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
         _slideTimer.Start();
     }
 
+    // ---- Fade entrance / exit (ToastLayout.Animation == Fade) --------------
+
+    private void StartFadeIn(PointInt32 target)
+    {
+        _slideTarget = target;
+        // No off-screen start: the window materialises in place. Alpha is
+        // already 0 from InitLayeredAlpha, so nothing flashes before tick one.
+        var elapsed = 0;
+        try { AppWindow.Move(target); } catch { }
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideInMs);
+            var eased = 1.0 - (1.0 - t) * (1.0 - t);
+            SetWindowOpacity((byte)(eased * 255));
+            // Keep tracking Y: the stack can re-settle mid-fade.
+            try { AppWindow.Move(new PointInt32(_slideTarget.X, _slideTarget.Y)); } catch { }
+            if (t >= 1.0)
+            {
+                _slideInComplete = true;
+                _slideTimer?.Stop();
+                EnsureOpaque();
+            }
+        };
+        _slideTimer.Start();
+    }
+
+    private void StartFadeOut(Action onComplete)
+    {
+        ReapplyLayeredForFade();
+        var elapsed = 0;
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideOutMs);
+            SetWindowOpacity((byte)((1.0 - t) * 255));
+            if (t >= 1.0)
+            {
+                _slideTimer?.Stop();
+                onComplete();
+            }
+        };
+        _slideTimer.Start();
+    }
+
+    // EnsureOpaque strips WS_EX_LAYERED once the entrance finishes, so fading
+    // back out has to put it back before it can touch alpha again.
+    private void ReapplyLayeredForFade()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        var ex = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
+        NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, ex | (nint)NativeMethods.WS_EX_LAYERED);
+        NativeMethods.SetLayeredWindowAttributes(_hwnd, 0, 255, NativeMethods.LWA_ALPHA);
+    }
+
     private void StartRepositionAnim(PointInt32 target)
     {
         var startY = AppWindow.Position.Y;
@@ -434,6 +534,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
 
     private void StartSlideOut(Action onComplete)
     {
+        if (UseFade) { StartFadeOut(onComplete); return; }
         var startX = AppWindow.Position.X;
         var startY = AppWindow.Position.Y;
         var endX = ToastLayout.OffScreenX(DisplayArea.Primary.WorkArea, _pixelWidth);
@@ -471,6 +572,7 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
         if (!expanded)
         {
             _statusText.Visibility = Visibility.Collapsed;
+            ResetTtlCountdown();
         }
 
         var targetHeight = MeasureHeightPixels(_root);
@@ -618,6 +720,47 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
         }
     }
 
+    // ---- Auto-dismiss (opt-in via AppSettings.SmsTtlSeconds) --------------
+
+    private void StartTtlCountdown(int seconds)
+    {
+        _ttlTotalMs = seconds * 1000;
+        _ttlElapsedMs = 0;
+        DebugLog.Write("SmsSlideout", $"StartTtlCountdown seconds={seconds}");
+        _ttlTimer = DispatcherQueue.CreateTimer();
+        _ttlTimer.Interval = TimeSpan.FromMilliseconds(50);
+        _ttlTimer.Tick += (_, _) =>
+        {
+            if (_closing) return;
+            // Hovering, mid-reply, or mid-send all hold the countdown. Expanded
+            // matters most: losing a half-typed reply to a timer is unforgivable.
+            if (_ttlHovered || _expanded || _sending) return;
+            _ttlElapsedMs += 50;
+            var remaining = Math.Max(0, _ttlTotalMs - _ttlElapsedMs);
+            var progress = (double)remaining / _ttlTotalMs;
+            _ttlBar.ColumnDefinitions[0].Width = new GridLength(progress, GridUnitType.Star);
+            _ttlBar.ColumnDefinitions[1].Width = new GridLength(1.0 - progress, GridUnitType.Star);
+            if (remaining <= 0)
+            {
+                _ttlTimer!.Stop();
+                DebugLog.Write("SmsSlideout", "TTL expired — dismissing.");
+                BeginHide();
+            }
+        };
+        _ttlTimer.Start();
+    }
+
+    /// Restarts the countdown from full. Called when the reply panel collapses:
+    /// resuming from wherever it had paused could dismiss the window a moment
+    /// after the user cancelled, which reads as the app eating the message.
+    private void ResetTtlCountdown()
+    {
+        if (_ttlTimer == null || _closing) return;
+        _ttlElapsedMs = 0;
+        _ttlBar.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        _ttlBar.ColumnDefinitions[1].Width = new GridLength(0, GridUnitType.Star);
+    }
+
     private async void CloseAfter(int ms)
     {
         await Task.Delay(ms);
@@ -628,10 +771,12 @@ public class SmsSlideoutWindow : WindowEx, IRemoteAckTarget, IStackableToast, IS
     {
         if (_closing) return;
         _closing = true;
+        _ttlTimer?.Stop();
         _slideTimer?.Stop();
         _slideYTimer?.Stop();
         _expandTimer?.Stop();
-        EnsureOpaque();
+        // Fading needs the layered style kept, not stripped.
+        if (!UseFade) EnsureOpaque();
         StartSlideOut(() => Close());
     }
 

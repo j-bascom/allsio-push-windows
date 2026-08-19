@@ -1,3 +1,4 @@
+using AllsioPush.Config;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -82,6 +83,8 @@ public class UpdateToastWindow : WindowEx, IStackableToast
             if (removed) SlideoutWindow.LayoutStack();
         };
     }
+
+    private bool UseFade => ToastLayout.Animation == NotificationAnimation.Fade;
 
     private void ConfigurePresenter()
     {
@@ -229,6 +232,7 @@ public class UpdateToastWindow : WindowEx, IStackableToast
 
     private void StartSlideIn(PointInt32 target)
     {
+        if (UseFade) { StartFadeIn(target); return; }
         _slideTarget = target;
         var work = DisplayArea.Primary.WorkArea;
         var startX = ToastLayout.OffScreenX(work, _pixelWidth);
@@ -257,6 +261,71 @@ public class UpdateToastWindow : WindowEx, IStackableToast
         _slideTimer.Start();
     }
 
+    // ---- Fade entrance / exit (ToastLayout.Animation == Fade) --------------
+
+    private void StartFadeIn(PointInt32 target)
+    {
+        _slideTarget = target;
+        // No off-screen start: the window materialises in place. Alpha is
+        // already 0 from InitLayeredAlpha, so nothing flashes before tick one.
+        var elapsed = 0;
+        try { AppWindow.Move(target); } catch { }
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideInMs);
+            var eased = 1.0 - (1.0 - t) * (1.0 - t);
+            SetWindowOpacity((byte)(eased * 255));
+            // Keep tracking Y: the stack can re-settle mid-fade.
+            try { AppWindow.Move(new PointInt32(_slideTarget.X, _slideTarget.Y)); } catch { }
+            if (t >= 1.0)
+            {
+                _slideInComplete = true;
+                _slideTimer?.Stop();
+                EnsureOpaque();
+            }
+        };
+        _slideTimer.Start();
+    }
+
+    private void StartFadeOut(Action onComplete)
+    {
+        ReapplyLayeredForFade();
+        var elapsed = 0;
+
+        _slideTimer?.Stop();
+        _slideTimer = DispatcherQueue.CreateTimer();
+        _slideTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _slideTimer.IsRepeating = true;
+        _slideTimer.Tick += (_, _) =>
+        {
+            elapsed += 16;
+            var t = Math.Min(1.0, (double)elapsed / SlideOutMs);
+            SetWindowOpacity((byte)((1.0 - t) * 255));
+            if (t >= 1.0)
+            {
+                _slideTimer?.Stop();
+                onComplete();
+            }
+        };
+        _slideTimer.Start();
+    }
+
+    // EnsureOpaque strips WS_EX_LAYERED once the entrance finishes, so fading
+    // back out has to put it back before it can touch alpha again.
+    private void ReapplyLayeredForFade()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        var ex = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
+        NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, ex | (nint)NativeMethods.WS_EX_LAYERED);
+        NativeMethods.SetLayeredWindowAttributes(_hwnd, 0, 255, NativeMethods.LWA_ALPHA);
+    }
+
     private void StartRepositionAnim(PointInt32 target)
     {
         var startY = AppWindow.Position.Y;
@@ -281,6 +350,7 @@ public class UpdateToastWindow : WindowEx, IStackableToast
 
     private void StartSlideOut(Action onComplete)
     {
+        if (UseFade) { StartFadeOut(onComplete); return; }
         var startX = AppWindow.Position.X;
         var startY = AppWindow.Position.Y;
         var endX = ToastLayout.OffScreenX(DisplayArea.Primary.WorkArea, _pixelWidth);
@@ -312,7 +382,8 @@ public class UpdateToastWindow : WindowEx, IStackableToast
         _closing = true;
         _slideTimer?.Stop();
         _slideYTimer?.Stop();
-        EnsureOpaque();
+        // Fading needs the layered style kept, not stripped.
+        if (!UseFade) EnsureOpaque();
         StartSlideOut(() => Close());
     }
 }

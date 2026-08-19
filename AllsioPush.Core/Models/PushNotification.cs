@@ -18,6 +18,13 @@ public class PushNotification
     public string? GroupName { get; set; }
     public List<NotificationButton> Buttons { get; set; } = new();
 
+    // Locally-generated system notices (e.g. "upgrade complete") set this to
+    // suppress the action row entirely — no Copy, and no default Acknowledge.
+    // There is nothing to copy and nothing for the server to be told about:
+    // acking one would POST against a synthetic id that no notification exists
+    // under. Server payloads never set this.
+    public bool SuppressActions { get; set; }
+
     public string? CallerName { get; set; }
     public string? CallerPhone { get; set; }
     public string? Reason { get; set; }
